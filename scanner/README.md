@@ -414,5 +414,5 @@ MIT License - see [../LICENSE](../LICENSE)
 
 ## Support
 
-- Issues: https://github.com/martiantux/subdir/issues
-- Documentation: https://github.com/martiantux/subdir/tree/main/docs
+- Issues: https://github.com/justriverjames/subdir/issues
+- Documentation: https://github.com/justriverjames/subdir/tree/main/docs

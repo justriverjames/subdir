@@ -51,7 +51,7 @@ npm --version
 
 ```bash
 cd /opt
-sudo git clone https://github.com/martiantux/subdir.git
+sudo git clone https://github.com/justriverjames/subdir.git
 cd subdir
 sudo chown -R $USER:$USER .
 ```

@@ -335,7 +335,7 @@ You can also host SubDir yourself:
 
 ```bash
 # Clone and run
-git clone https://github.com/martiantux/subdir.git
+git clone https://github.com/justriverjames/subdir.git
 cd subdir
 docker-compose up
 
@@ -383,8 +383,8 @@ ws.on('new_subreddit', (data) => {
 
 ## Support
 
-- **Documentation:** https://github.com/martiantux/subdir/tree/main/docs
-- **Issues:** https://github.com/martiantux/subdir/issues
+- **Documentation:** https://github.com/justriverjames/subdir/tree/main/docs
+- **Issues:** https://github.com/justriverjames/subdir/issues
 - **API Docs:** https://subdir.hammond.im/api/docs
 
 ---

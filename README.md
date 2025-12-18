@@ -162,7 +162,7 @@ subdir/
 
 ```bash
 # On your VPS
-git clone https://github.com/martiantux/subdir.git
+git clone https://github.com/justriverjames/subdir.git
 cd subdir
 
 # Start services
@@ -325,15 +325,15 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 **Built for the datahoarder and selfhosted communities.**
 
-SubDir is complementary to [Redditarr](https://github.com/martiantux/redditarr) - a self-hosted Reddit archiving tool.
+SubDir is complementary to [Redditarr](https://github.com/justriverjames/redditarr) - a self-hosted Reddit archiving tool.
 
 ---
 
 ## Support
 
-- **Issues:** [GitHub Issues](https://github.com/martiantux/subdir/issues)
+- **Issues:** [GitHub Issues](https://github.com/justriverjames/subdir/issues)
 - **Documentation:** [docs/](docs/)
-- **Discussions:** [GitHub Discussions](https://github.com/martiantux/subdir/discussions)
+- **Discussions:** [GitHub Discussions](https://github.com/justriverjames/subdir/discussions)
 
 ---
 
