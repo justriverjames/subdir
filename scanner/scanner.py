@@ -24,7 +24,7 @@ class SubredditScanner:
 
     Handles:
     - Loading subreddit lists
-    - Processing subreddits (metadata + thread IDs)
+    - Processing subreddits (metadata only)
     - Progress tracking and reporting
     - Graceful shutdown
     """
@@ -53,7 +53,6 @@ class SubredditScanner:
         self.start_time: Optional[float] = None
         self.subreddits_processed = 0
         self.subreddits_failed = 0
-        self.total_threads_discovered = 0
 
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -137,7 +136,7 @@ class SubredditScanner:
 
     async def process_subreddit(self, subreddit: str) -> bool:
         """
-        Process a single subreddit: fetch metadata and optionally thread IDs.
+        Process a single subreddit: fetch metadata only.
 
         Args:
             subreddit: Subreddit name
@@ -161,27 +160,9 @@ class SubredditScanner:
                 nsfw = metadata.get('over18', False)
 
                 # Mark metadata as collected
-                metadata_collected = True
-            else:
-                # Update status for non-active subreddits
-                self.db.update_subreddit_status(subreddit, status)
-
-                # Log non-active status and return
-                logging.warning(f"⚠️  r/{subreddit} - {status}")
-
-                # Mark as completed with metadata collected but no threads
-                self.db.update_subreddit(
-                    subreddit, 'completed', f"Status: {status}",
-                    metadata_collected=True, threads_collected=True  # Mark both as done (nothing to collect)
-                )
-                return True
-
-            # Check if we should fetch thread IDs
-            if self.config.mode == 'metadata':
-                # Metadata mode: Skip thread ID collection, keep status as 'active' for future thread collection
                 self.db.update_subreddit(
                     subreddit, 'active', None,
-                    metadata_collected=True, threads_collected=False
+                    metadata_collected=True
                 )
 
                 # Update statistics
@@ -190,73 +171,24 @@ class SubredditScanner:
                 # Clean single-line output
                 nsfw_flag = '🔞' if nsfw else '  '
                 logging.info(
-                    f"✓ r/{subreddit:<25} {nsfw_flag} {subscribers:>12,} subs  |  metadata collected"
+                    f"✓ r/{subreddit:<25} {nsfw_flag} {subscribers:>12,} subs"
                 )
 
                 return True
 
-            # Fetch thread IDs from multiple sources
-            total_threads = 0
-            sources = []
-
-            # Check if this is the first time processing this subreddit
-            existing_threads = self.db.get_thread_count(subreddit)
-            is_first_fetch = existing_threads == 0
-
-            if is_first_fetch:
-                # Initial fetch: comprehensive collection
-                if self.config.fetch_hot:
-                    sources.append(('hot', 'all', 'Hot'))
-
-                if self.config.fetch_top_all:
-                    sources.append(('top', 'all', 'Top/All'))
-
-                if self.config.fetch_top_year:
-                    sources.append(('top', 'year', 'Top/Year'))
             else:
-                # Update fetch: ONLY hot posts
-                if self.config.fetch_hot:
-                    sources.append(('hot', 'all', 'Hot'))
+                # Update status for non-active subreddits
+                self.db.update_subreddit_status(subreddit, status)
 
-            for sort, time_filter, description in sources:
-                if self.shutdown_requested:
-                    logging.info("🛑 Shutdown requested")
-                    break
+                # Log non-active status and return
+                logging.warning(f"⚠️  r/{subreddit} - {status}")
 
-                thread_ids = await self.reddit_client.get_thread_ids(
-                    subreddit,
-                    sort=sort,
-                    time_filter=time_filter,
-                    limit=self.config.max_threads_per_source
+                # Mark as completed with metadata collected
+                self.db.update_subreddit(
+                    subreddit, 'completed', f"Status: {status}",
+                    metadata_collected=True
                 )
-
-                if thread_ids:
-                    added = self.db.add_thread_ids(subreddit, thread_ids)
-                    total_threads += added
-
-                # Small delay between sources
-                if len(sources) > 1:
-                    await asyncio.sleep(1)
-
-            # Update processing state as completed with both metadata and threads collected
-            self.db.update_subreddit(
-                subreddit, 'completed', None,
-                metadata_collected=True, threads_collected=True
-            )
-
-            # Update statistics
-            self.subreddits_processed += 1
-            self.total_threads_discovered += total_threads
-
-            # Clean single-line output
-            sources_str = '+'.join([s[2] for s in sources])
-            nsfw_flag = '🔞' if nsfw else '  '
-            logging.info(
-                f"✓ r/{subreddit:<25} {nsfw_flag} {subscribers:>12,} subs  |  "
-                f"{total_threads:>5} threads ({sources_str})"
-            )
-
-            return True
+                return True
 
         except Exception as e:
             logging.error(f"❌ r/{subreddit} - Error: {e}")
@@ -264,8 +196,7 @@ class SubredditScanner:
             self.db.update_subreddit(
                 subreddit,
                 'error',
-                error_message=str(e),
-                increment_retry=True
+                error_message=str(e)
             )
             self.subreddits_failed += 1
             return False
@@ -276,49 +207,28 @@ class SubredditScanner:
         self.start_time = time.time()
 
         # Fix any inconsistent states before processing
-        if self.config.mode == 'metadata':
-            fixed = self.db.fix_inconsistent_states()
-            if sum(fixed.values()) > 0:
-                logging.info(f"Fixed {sum(fixed.values())} inconsistent database states")
+        fixed = self.db.fix_inconsistent_states()
+        if sum(fixed.values()) > 0:
+            logging.info(f"Fixed {sum(fixed.values())} inconsistent database states")
 
         # Get initial counts
         stats = self.db.get_processing_stats()
-
-        mode_display = {
-            'metadata': 'Metadata Collection',
-            'threads': 'Thread ID Collection'
-        }.get(self.config.mode, 'Unknown')
+        pending = len(self.db.get_pending_subreddits())
 
         print("=" * 80)
-        print(f"🚀 Starting Scanner - Mode: {mode_display}")
-        if self.config.mode == 'metadata':
-            # Count again after fixing inconsistencies
-            pending = len(self.db.get_pending_subreddits(mode='metadata'))
-            print(f"   {pending:,} subreddits need metadata")
-        elif self.config.mode == 'threads':
-            # Count active subreddits without threads
-            pending_threads = len(self.db.get_pending_subreddits(mode='threads'))
-            print(f"   {pending_threads:,} subreddits need thread IDs")
+        print(f"🚀 Starting Scanner - Subreddit Metadata Collection")
+        print(f"   {pending:,} subreddits need metadata")
         print("=" * 80)
         print()
 
         try:
             while not self.shutdown_requested:
-                # Get pending subreddits based on mode
-                pending = self.db.get_pending_subreddits(
-                    limit=1,
-                    mode=self.config.mode
-                )
+                # Get pending subreddits
+                pending = self.db.get_pending_subreddits(limit=1)
 
                 if not pending:
                     print()
-                    if self.config.mode == 'metadata':
-                        logging.info("✅ All subreddit metadata collected!")
-                        logging.info("")
-                        logging.info("To collect thread IDs, run:")
-                        logging.info("  python main.py --threads")
-                    elif self.config.mode == 'threads':
-                        logging.info("✅ All subreddit threads collected!")
+                    logging.info("✅ All subreddit metadata collected!")
                     break
 
                 subreddit = pending[0]
@@ -352,17 +262,8 @@ class SubredditScanner:
         elapsed = time.time() - self.start_time
         total = stats.get('total_subreddits', 0)
 
-        # Get correct completed/pending counts based on mode
-        if self.config.mode == 'metadata':
-            completed = stats.get('metadata_collected', 0)
-            pending = stats.get('metadata_pending', 0)
-        elif self.config.mode == 'threads':
-            completed = stats.get('threads_collected', 0)
-            pending = stats.get('threads_pending', 0)
-        else:
-            # Fallback to status-based counting
-            completed = stats.get('completed', 0)
-            pending = stats.get('pending', 0)
+        completed = stats.get('metadata_collected', 0)
+        pending = stats.get('metadata_pending', 0)
 
         # Calculate rate and ETA
         if elapsed > 0:
@@ -385,8 +286,7 @@ class SubredditScanner:
         print(
             f"   Progress: {completed:>5}/{total} ({progress_pct:>5.1f}%)  |  "
             f"{subs_per_hour:>5.1f} subs/hr  |  "
-            f"ETA: {eta_str:<10}  |  "
-            f"{self.total_threads_discovered:>8,} threads"
+            f"ETA: {eta_str:<10}"
         )
 
     def _report_progress(self):
@@ -394,17 +294,8 @@ class SubredditScanner:
         stats = self.db.get_processing_stats()
         elapsed = time.time() - self.start_time
 
-        # Get correct completed/pending counts based on mode
-        if self.config.mode == 'metadata':
-            completed = stats.get('metadata_collected', 0)
-            pending = stats.get('metadata_pending', 0)
-        elif self.config.mode == 'threads':
-            completed = stats.get('threads_collected', 0)
-            pending = stats.get('threads_pending', 0)
-        else:
-            # Fallback to status-based counting
-            completed = stats.get('completed', 0)
-            pending = stats.get('pending', 0)
+        completed = stats.get('metadata_collected', 0)
+        pending = stats.get('metadata_pending', 0)
 
         # Calculate rates
         subs_per_hour = (self.subreddits_processed / elapsed * 3600) if elapsed > 0 else 0
@@ -427,7 +318,6 @@ class SubredditScanner:
         print(f"   Completed: {completed:>6,} / {stats.get('total_subreddits', 0):,} total")
         print(f"   Pending:   {pending:>6,}")
         print(f"   Failed:    {self.subreddits_failed:>6}")
-        print(f"   Threads:   {self.total_threads_discovered:>6,} thread IDs collected")
         print("-" * 80)
         print(f"   Rate:      {subs_per_hour:>6.1f} subreddits/hour")
         print(f"   Elapsed:   {elapsed_str:>6}")
@@ -440,17 +330,8 @@ class SubredditScanner:
         stats = self.db.get_processing_stats()
         elapsed = time.time() - self.start_time
 
-        # Get correct completed/pending counts based on mode
-        if self.config.mode == 'metadata':
-            completed = stats.get('metadata_collected', 0)
-            pending = stats.get('metadata_pending', 0)
-        elif self.config.mode == 'threads':
-            completed = stats.get('threads_collected', 0)
-            pending = stats.get('threads_pending', 0)
-        else:
-            # Fallback to status-based counting
-            completed = stats.get('completed', 0)
-            pending = stats.get('pending', 0)
+        completed = stats.get('metadata_collected', 0)
+        pending = stats.get('metadata_pending', 0)
 
         # Calculate rates
         subs_per_hour = (self.subreddits_processed / elapsed * 3600) if elapsed > 0 else 0
@@ -471,7 +352,6 @@ class SubredditScanner:
         print(f"  Completed:           {completed:>8,}")
         print(f"  Pending:             {pending:>8,}")
         print(f"  Errors:              {stats.get('error', 0):>8}")
-        print(f"  Total threads:       {stats.get('total_threads', 0):>8,}")
         print()
         print("Performance:")
         print(f"  Processing rate:     {subs_per_hour:>8.1f} subs/hour")

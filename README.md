@@ -1,46 +1,37 @@
 # SubDir
 
-**Metadata service for Reddit communities** - like TheTVDB for Sonarr/Radarr, but for Reddit.
+**A searchable directory of 29,000+ subreddits** - metadata service for Reddit communities.
 
-SubDir provides a searchable catalog of 29,000+ subreddits with pre-collected thread IDs, enabling instant discovery and faster archiving workflows.
+SubDir provides a clean, fast interface for discovering subreddits with full metadata including subscriber counts, descriptions, NSFW flags, and more.
 
 ---
 
 ## Features
 
-- **29,404 subreddits** with full metadata (subscribers, descriptions, NSFW flags, etc.)
-- **782,533 thread IDs** pre-collected from Hot/Top feeds
-- **Instant search** across all subreddits (no Reddit API calls needed)
+- **29,404 subreddits** with full metadata
+- **Instant search** - no Reddit API calls needed
+- **NSFW filtering** - toggle adult content on/off
+- **Rich metadata** - subscribers, descriptions, icons, categories
 - **REST API** for programmatic access
-- **Web UI** for browsing and discovery
-- **Bulk exports** for offline use (~5MB gzipped)
-- **Self-hostable** - run locally or deploy to your own server
+- **Self-hostable** - run locally or deploy to your VPS
+- **Lightweight** - 8.7MB database
 
 ---
 
 ## Quick Start
 
-### Local Development
+### Web Frontend (Next.js)
 
-Run both services in separate terminals:
-
-**Terminal 1 - API (port 7733):**
-```bash
-cd api
-npm install
-npm start
-```
-
-**Terminal 2 - Web UI (port 7734):**
 ```bash
 cd web
 npm install
-npm start
+npm run dev
 ```
 
-Then open: **http://localhost:7734**
+Then open: **http://localhost:3000**
 
-**Scanner (optional - for collecting fresh data):**
+### Scanner (Data Collection)
+
 ```bash
 cd scanner
 python3 -m venv venv
@@ -48,92 +39,86 @@ source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with Reddit API credentials
-python main.py --ingest       # Import subreddits from CSV
-python main.py --metadata     # Collect subreddit metadata
-python main.py --threads      # Collect thread IDs
+
+# Import subreddits and collect metadata
+python main.py --ingest subreddits.csv
+python main.py --metadata
 ```
 
-### Public Instance
-
-Live instance will be hosted at: **[subdir.hammond.im](https://subdir.hammond.im)** (coming soon)
-
-**Ports:**
-- API: 7733
-- Web UI: 7734
-- (Sequential, unique to SubDir project)
+See [scanner/README.md](scanner/README.md) for detailed documentation.
 
 ---
 
 ## Components
 
-### 1. Scanner (Python CLI)
-Collects subreddit metadata and thread IDs from Reddit API.
+### 1. Web Frontend (Next.js + TypeScript)
+Modern search interface with:
+- Real-time search across 29,000+ subreddits
+- NSFW content filtering
+- Subreddit icons and branding colors
+- Category badges
+- Export to JSON/CSV
+- Responsive design with Tailwind CSS
 
-```bash
-cd scanner
+**Stack:** Next.js 16, TypeScript, Tailwind CSS, SQLite (read-only)
 
-# Setup
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-# Edit .env with your Reddit API credentials
+### 2. Scanner (Python CLI)
+Collects subreddit metadata from Reddit API:
+- Metadata: subscribers, descriptions, icons, categories
+- Rate-limited (85 QPM) to respect Reddit's API limits
+- Incremental updates
+- Schema migrations
 
-# Usage
-python main.py --ingest      # Import subreddits from CSV
-python main.py --metadata    # Collect metadata
-python main.py --threads     # Collect thread IDs
-```
+**Stack:** Python 3.11+, httpx, SQLite, asyncio
 
-See [scanner/README.md](scanner/README.md) for detailed documentation.
+---
 
-### 2. API (FastAPI)
-REST API for querying subreddit data.
+## API Endpoints
 
-**Endpoints:**
-- `GET /api/search?q=python` - Search subreddits
-- `GET /api/subreddits/{name}` - Get metadata
-- `GET /api/subreddits/{name}/threads` - Get thread IDs
-- `GET /api/export/metadata.json.gz` - Bulk metadata export
+The Next.js app provides internal API routes:
+
+- `GET /api/search?q={query}&limit={n}&nsfw={bool}` - Search subreddits
 - `GET /api/stats` - Database statistics
+- `GET /api/subreddits/{name}` - Get subreddit details
+- `GET /api/export/json?format=minimal|full` - JSON export
+- `GET /api/export/csv` - CSV export
 
-See [docs/API.md](docs/API.md) for full API documentation.
+---
 
-### 3. Web UI
-Simple search interface for browsing subreddits.
+## Database Schema
 
-- Instant search across 29k+ subreddits
-- View subscribers, descriptions, NSFW status
-- Click through to Reddit or view thread list
-- Mobile responsive
+**Current Version:** v3 (migrating to v4)
+
+**Core Fields:**
+- name, title, description
+- subscribers, active_users
+- over_18, subreddit_type
+- created_utc, last_updated
+
+**v4 Additions (in progress):**
+- icon_url, primary_color
+- advertiser_category (Reddit's category)
+- submission_type, allow_images, allow_videos
+- category, tags (multi-label categorization)
+
+**Size:** 8.7MB SQLite database
 
 ---
 
 ## Use Cases
 
 ### For Redditarr Users
-SubDir provides instant subreddit discovery and pre-populated thread IDs, eliminating slow Reddit API pagination:
-
-**Without SubDir:**
-- Search "python" → Query Reddit API (rate-limited)
-- Paginate through posts (2-3 minutes for 1500 threads)
-
-**With SubDir:**
-- Search "python" → Instant results from local cache
-- Get 1523 thread IDs instantly → Skip pagination entirely
-
-See [docs/INTEGRATION.md](docs/INTEGRATION.md) for integration guide.
+SubDir will provide instant subreddit discovery for [Redditarr](https://github.com/justriverjames/redditarr) archiving workflows.
 
 ### For Researchers
-- Bulk download metadata for analysis
+- Bulk metadata exports for analysis
 - Explore subreddit ecosystem
-- Find related communities
-- Track subscriber growth (with periodic re-scanning)
+- Category-based discovery
 
 ### For Developers
-- Build Reddit-related tools without hitting API limits
+- Build Reddit tools without hitting API limits
 - Pre-populate databases for testing
-- Subreddit discovery features in your apps
+- Subreddit discovery features
 
 ---
 
@@ -141,177 +126,106 @@ See [docs/INTEGRATION.md](docs/INTEGRATION.md) for integration guide.
 
 ```
 subdir/
-├── scanner/        # Python CLI for data collection
-├── api/            # FastAPI backend
-├── web/            # Web UI (HTML/JS)
-├── data/           # SQLite database (106MB)
-└── docs/           # Documentation
+├── scanner/              # Python CLI for data collection
+│   ├── main.py          # CLI entry point
+│   ├── scanner.py       # Core scanning logic
+│   ├── database.py      # SQLite operations
+│   ├── reddit_client.py # Reddit API wrapper
+│   └── README.md        # Scanner documentation
+│
+├── web/                 # Next.js web frontend
+│   ├── app/             # Next.js App Router
+│   │   ├── page.tsx    # Search interface
+│   │   └── api/        # API routes
+│   └── lib/            # Database connection
+│
+├── data/               # SQLite database
+│   └── subreddit_scanner.db
+│
+├── README.md           # This file
+├── ROADMAP.md          # Development roadmap
+└── MIGRATION_SUMMARY.md # Database migration history
 ```
-
-**Tech Stack:**
-- **Scanner:** Python 3.11+, httpx, SQLite (data collection)
-- **API:** Node.js, Express, SQLite (read-only)
-- **Web UI:** Vanilla JS, Tailwind CSS, Express
-- **Deployment:** VPS with Nginx + Cloudflare
 
 ---
 
 ## Deployment
 
-### VPS Deployment (Production)
+### Production Build
 
 ```bash
-# On your VPS
-git clone https://github.com/justriverjames/subdir.git
-cd subdir
-
-# Start services
-docker-compose -f docker-compose.prod.yml up -d
-
-# Setup Nginx reverse proxy (see docs/DEPLOYMENT.md)
-# Setup SSL with Let's Encrypt
-# Configure Cloudflare DNS + caching
+cd web
+npm run build
+npm start
 ```
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for complete deployment guide.
+Set environment variable for database location:
+```bash
+# web/.env.local
+DATABASE_PATH=../data/subreddit_scanner.db
+```
 
-### Data Updates
+### VPS Deployment
+- Upload database to VPS
+- Build Next.js app
+- Run behind Nginx reverse proxy
+- Configure Cloudflare DNS
 
-Run scanner periodically to keep data fresh:
+See deployment notes in scanner/README.md for details.
+
+---
+
+## Data Updates
+
+Run scanner periodically to refresh metadata:
 
 ```bash
-# Manually
 cd scanner
-python main.py --metadata
-python main.py --threads
-
-# Or setup cron job
-0 2 * * 0 cd /path/to/subdir/scanner && python main.py --metadata && python main.py --threads
+source venv/bin/activate
+python main.py --metadata  # Update existing subreddits
 ```
 
----
-
-## API Integration
-
-### Bulk Metadata Export
-```bash
-# Download entire dataset (5MB gzipped)
-curl https://subdir.hammond.im/api/export/metadata.json.gz -o metadata.json.gz
-gunzip metadata.json.gz
-```
-
-### Search Example
-```bash
-curl "https://subdir.hammond.im/api/search?q=python&limit=10"
-```
-
-### Thread IDs Example
-```bash
-curl "https://subdir.hammond.im/api/subreddits/python/threads"
-```
-
-See [docs/API.md](docs/API.md) for complete API documentation.
-
----
-
-## Data & Privacy
-
-### What's Collected
-- Subreddit names and metadata (subscribers, descriptions, NSFW flags)
-- Thread IDs (post IDs, no content)
-- All data sourced from public Reddit API
-
-### What's NOT Collected
-- Post content, titles, or comments
-- User data or personal information
-- Private subreddit data
-
-### Legal
-SubDir hosts only **metadata** - no Reddit content. Similar services:
-- subredditstats.com (statistics)
-- pushshift (metadata archives)
-- Reddit's own public API
-
-All data is publicly available via Reddit's API. SubDir simply aggregates and provides convenient access.
-
----
-
-## Development
-
-### Project Structure
-```
-subdir/
-├── scanner/               # Data collection
-│   ├── main.py           # CLI entry point
-│   ├── scanner.py        # Core scanning logic
-│   ├── database.py       # SQLite operations
-│   └── reddit_client.py  # Reddit API wrapper
-│
-├── api/                  # REST API
-│   ├── main.py          # FastAPI app
-│   ├── routes/          # API endpoints
-│   └── models.py        # Data models
-│
-├── web/                 # Web UI
-│   ├── public/          # Static files
-│   └── server.js        # Express server
-│
-├── data/                # Shared database
-│   └── subreddit_scanner.db
-│
-└── docs/                # Documentation
-    ├── API.md
-    ├── DEPLOYMENT.md
-    └── INTEGRATION.md
-```
-
-### Running Tests
-```bash
-# API tests
-cd api
-pytest
-
-# Scanner tests
-cd scanner
-pytest
-```
-
----
-
-## Contributing
-
-We welcome contributions! Areas of interest:
-
-- **AI Categorization:** Categorize subreddits (Technology/Science/Entertainment/etc.)
-- **Enhanced Search:** Fuzzy search, category filters, advanced sorting
-- **Web UI:** Improve design, add features
-- **Performance:** Optimize queries, caching strategies
-- **Documentation:** Improve guides and examples
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+**Recommended:** Weekly metadata refresh to keep subscriber counts current.
 
 ---
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md) for planned features and development timeline.
+See [ROADMAP.md](ROADMAP.md) for full development plans.
 
-**v1.0 (Current):**
-- ✅ Scanner CLI
-- ✅ REST API
-- ✅ Basic Web UI
-- ✅ Docker deployment
+**Current Focus (Pre-v1.0):**
+- ✅ Database migration to v3 (completed)
+- 🚧 Add visual metadata (icons, colors) - v4 schema
+- 🚧 AI-powered categorization using Claude API
+- 🚧 Multi-label tagging system
+- ⏳ Beta testing
 
-**v1.1 (Next):**
-- AI-powered categorization
-- Enhanced search features
+**v1.0 Goals:**
+- Production-ready web interface
+- Categorized subreddit directory
+- Public deployment at subdir.justriverjames.com
 - Redditarr integration
 
-**Future:**
-- PostgreSQL migration
-- User accounts & saved searches
-- Historical data tracking
-- Advanced analytics
+---
+
+## Contributing
+
+Built for the datahoarder and selfhosted communities. Contributions welcome!
+
+**Areas of interest:**
+- AI categorization improvements
+- Search enhancements
+- UI/UX improvements
+- Documentation
+
+---
+
+## Tech Stack
+
+- **Frontend:** Next.js 16, TypeScript, Tailwind CSS
+- **Scanner:** Python 3.11+, httpx, SQLite
+- **Database:** SQLite 3 (8.7MB)
+- **Deployment:** VPS + Nginx + Cloudflare
 
 ---
 
@@ -323,18 +237,8 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Credits
 
-**Built for the datahoarder and selfhosted communities.**
-
-SubDir is complementary to [Redditarr](https://github.com/justriverjames/redditarr) - a self-hosted Reddit archiving tool.
+**Built for [Redditarr](https://github.com/justriverjames/redditarr)** and the selfhosted community.
 
 ---
 
-## Support
-
-- **Issues:** [GitHub Issues](https://github.com/justriverjames/subdir/issues)
-- **Documentation:** [docs/](docs/)
-- **Discussions:** [GitHub Discussions](https://github.com/justriverjames/subdir/discussions)
-
----
-
-**Stats:** 29,404 subreddits | 782,533 thread IDs | 106MB database | Updated October 2025
+**Current Stats:** 29,404 subreddits | 8.7MB database | Updated December 2025

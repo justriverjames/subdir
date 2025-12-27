@@ -13,10 +13,10 @@ from contextlib import contextmanager
 class Database:
     """SQLite database manager for subreddit scanning."""
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 4
 
     SCHEMA = """
-    -- Unified subreddit metadata and processing state table
+    -- Subreddit metadata and discovery table
     CREATE TABLE IF NOT EXISTS subreddits (
         name TEXT PRIMARY KEY,
         -- Metadata from Reddit API
@@ -28,21 +28,23 @@ class Database:
         over_18 BOOLEAN,
         subreddit_type TEXT,  -- 'public', 'private', 'restricted', 'archived'
         created_utc INTEGER,
+        -- Visual/branding fields (v4)
+        icon_url TEXT,
+        primary_color TEXT,
+        -- Categorization helper fields (v4)
+        advertiser_category TEXT,
+        submission_type TEXT,
+        allow_images BOOLEAN DEFAULT 1,
+        allow_videos BOOLEAN DEFAULT 1,
+        -- Search and discovery fields
+        category TEXT,
+        tags TEXT,
+        language TEXT DEFAULT 'en',
         -- Status and processing tracking
         status TEXT,  -- 'pending', 'active', 'private', 'banned', 'quarantined', 'deleted', 'error'
         last_updated INTEGER,
-        last_checked INTEGER,
-        retry_count INTEGER DEFAULT 0,
         error_message TEXT,
-        metadata_collected BOOLEAN DEFAULT 0,
-        threads_collected BOOLEAN DEFAULT 0
-    );
-
-    -- Simplified thread IDs table (no source or timestamp bloat)
-    CREATE TABLE IF NOT EXISTS thread_ids (
-        thread_id TEXT PRIMARY KEY,
-        subreddit TEXT NOT NULL,
-        FOREIGN KEY(subreddit) REFERENCES subreddits(name)
+        metadata_collected BOOLEAN DEFAULT 0
     );
 
     -- Schema version tracking
@@ -50,13 +52,13 @@ class Database:
         version INTEGER PRIMARY KEY
     );
 
-    -- Optimized indexes
-    CREATE INDEX IF NOT EXISTS idx_thread_ids_subreddit ON thread_ids(subreddit);
+    -- Optimized indexes for search and filtering
     CREATE INDEX IF NOT EXISTS idx_subreddits_status ON subreddits(status);
     CREATE INDEX IF NOT EXISTS idx_subreddits_metadata_collected ON subreddits(metadata_collected);
-    CREATE INDEX IF NOT EXISTS idx_subreddits_threads_collected ON subreddits(threads_collected);
-    CREATE INDEX IF NOT EXISTS idx_subreddits_retry_count ON subreddits(retry_count);
     CREATE INDEX IF NOT EXISTS idx_subreddits_subscribers ON subreddits(subscribers DESC);
+    CREATE INDEX IF NOT EXISTS idx_subreddits_category ON subreddits(category);
+    CREATE INDEX IF NOT EXISTS idx_subreddits_language ON subreddits(language);
+    CREATE INDEX IF NOT EXISTS idx_subreddits_name_prefix ON subreddits(name COLLATE NOCASE);
     """
 
     def __init__(self, db_path: str):
@@ -120,6 +122,10 @@ class Database:
             if current_version == 1:
                 self._migrate_v1_to_v2()
                 current_version = 2
+
+            if current_version == 2:
+                self._migrate_v2_to_v3()
+                current_version = 3
 
             # Update version
             cursor.execute("UPDATE schema_version SET version = ?", (current_version,))
@@ -290,6 +296,85 @@ class Database:
             logging.error(f"Migration failed: {e}")
             raise
 
+    def _migrate_v2_to_v3(self):
+        """Migrate from schema v2 to v3: focus on subreddit metadata, drop thread tracking."""
+        cursor = self.conn.cursor()
+        logging.info("Starting v2→v3 migration...")
+
+        try:
+            # 1. Create new subreddits table with v3 schema
+            cursor.execute("""
+                CREATE TABLE subreddits_v3 (
+                    name TEXT PRIMARY KEY,
+                    title TEXT,
+                    description TEXT,
+                    public_description TEXT,
+                    subscribers INTEGER,
+                    active_users INTEGER,
+                    over_18 BOOLEAN,
+                    subreddit_type TEXT,
+                    created_utc INTEGER,
+                    category TEXT,
+                    tags TEXT,
+                    language TEXT DEFAULT 'en',
+                    status TEXT,
+                    last_updated INTEGER,
+                    error_message TEXT,
+                    metadata_collected BOOLEAN DEFAULT 0
+                )
+            """)
+
+            # 2. Copy data from v2 to v3 (excluding threads_collected, retry_count, last_checked)
+            cursor.execute("""
+                INSERT INTO subreddits_v3 (
+                    name, title, description, public_description,
+                    subscribers, active_users, over_18, subreddit_type, created_utc,
+                    category, tags, language,
+                    status, last_updated, error_message, metadata_collected
+                )
+                SELECT
+                    name, title, description, public_description,
+                    subscribers, active_users, over_18, subreddit_type, created_utc,
+                    NULL as category,
+                    NULL as tags,
+                    'en' as language,
+                    status, last_updated, error_message, metadata_collected
+                FROM subreddits
+            """)
+
+            # 3. Drop old tables and indexes
+            cursor.execute("DROP TABLE IF EXISTS thread_ids")
+            cursor.execute("DROP INDEX IF EXISTS idx_thread_ids_subreddit")
+            cursor.execute("DROP INDEX IF EXISTS idx_subreddits_threads_collected")
+            cursor.execute("DROP INDEX IF EXISTS idx_subreddits_retry_count")
+            cursor.execute("DROP TABLE subreddits")
+
+            # 4. Rename new table
+            cursor.execute("ALTER TABLE subreddits_v3 RENAME TO subreddits")
+
+            # 5. Create v3 indexes
+            cursor.executescript("""
+                CREATE INDEX idx_subreddits_status ON subreddits(status);
+                CREATE INDEX idx_subreddits_metadata_collected ON subreddits(metadata_collected);
+                CREATE INDEX idx_subreddits_subscribers ON subreddits(subscribers DESC);
+                CREATE INDEX idx_subreddits_category ON subreddits(category);
+                CREATE INDEX idx_subreddits_language ON subreddits(language);
+                CREATE INDEX idx_subreddits_name_prefix ON subreddits(name COLLATE NOCASE);
+            """)
+
+            self.conn.commit()
+            logging.info("✓ Schema v2→v3 migration complete")
+
+            # Compact database to reclaim space
+            logging.info("Compacting database (VACUUM)...")
+            cursor.execute("VACUUM")
+            logging.info("✓ Database compacted")
+
+        except Exception as e:
+            self.conn.rollback()
+            logging.error(f"Migration failed: {e}")
+            raise
+
     @contextmanager
     def transaction(self):
         """Context manager for transactions."""
@@ -316,10 +401,9 @@ class Database:
             with self.transaction() as cursor:
                 cursor.execute("""
                     INSERT OR IGNORE INTO subreddits (
-                        name, status, last_checked, retry_count,
-                        metadata_collected, threads_collected
+                        name, status, metadata_collected
                     )
-                    VALUES (?, 'pending', 0, 0, 0, 0)
+                    VALUES (?, 'pending', 0)
                 """, (name.lower(),))
 
                 return cursor.rowcount > 0
@@ -342,10 +426,9 @@ class Database:
             for name in names:
                 cursor.execute("""
                     INSERT OR IGNORE INTO subreddits (
-                        name, status, last_checked, retry_count,
-                        metadata_collected, threads_collected
+                        name, status, metadata_collected
                     )
-                    VALUES (?, 'pending', 0, 0, 0, 0)
+                    VALUES (?, 'pending', 0)
                 """, (name.lower(),))
 
                 if cursor.rowcount > 0:
@@ -416,10 +499,9 @@ class Database:
                         # New subreddit - add with subscriber count
                         cursor.execute("""
                             INSERT INTO subreddits (
-                                name, status, subscribers, last_checked, retry_count,
-                                metadata_collected, threads_collected
+                                name, status, subscribers, metadata_collected
                             )
-                            VALUES (?, 'pending', ?, 0, 0, 0, 0)
+                            VALUES (?, 'pending', ?, 0)
                         """, (subreddit, subscribers))
 
                         added += 1
@@ -504,10 +586,9 @@ class Database:
                         # New subreddit - add with subscriber count
                         cursor.execute("""
                             INSERT INTO subreddits (
-                                name, status, subscribers, last_checked, retry_count,
-                                metadata_collected, threads_collected
+                                name, status, subscribers, metadata_collected
                             )
-                            VALUES (?, 'pending', ?, 0, 0, 0, 0)
+                            VALUES (?, 'pending', ?, 0)
                         """, (subreddit, subscribers))
 
                         added += 1
@@ -556,7 +637,6 @@ class Database:
                     UPDATE subreddits SET
                         title = ?,
                         description = ?,
-                        public_description = ?,
                         subscribers = ?,
                         active_users = ?,
                         over_18 = ?,
@@ -564,13 +644,17 @@ class Database:
                         subreddit_type = ?,
                         created_utc = ?,
                         last_updated = ?,
-                        last_checked = ?,
+                        icon_url = ?,
+                        primary_color = ?,
+                        advertiser_category = ?,
+                        submission_type = ?,
+                        allow_images = ?,
+                        allow_videos = ?,
                         error_message = NULL
                     WHERE name = ?
                 """, (
                     metadata.get('title'),
-                    metadata.get('description'),
-                    metadata.get('public_description'),
+                    metadata.get('public_description'),  # Use short description
                     metadata.get('subscribers'),
                     metadata.get('active_user_count'),
                     metadata.get('over18', False),
@@ -578,7 +662,12 @@ class Database:
                     metadata.get('subreddit_type'),
                     metadata.get('created_utc'),
                     now,
-                    now,
+                    metadata.get('community_icon'),  # Prefer community_icon over icon_img
+                    metadata.get('primary_color'),
+                    metadata.get('advertiser_category'),
+                    metadata.get('submission_type'),
+                    metadata.get('allow_images', True),
+                    metadata.get('allow_videos', True),
                     name.lower()
                 ))
 
@@ -596,49 +685,17 @@ class Database:
             status: Status string
             error_message: Optional error message
         """
-        now = int(time.time())
         with self.transaction() as cursor:
             cursor.execute("""
                 UPDATE subreddits SET
                     status = ?,
-                    last_checked = ?,
                     error_message = ?
                 WHERE name = ?
-            """, (status, now, error_message, name.lower()))
-
-    def add_thread_ids(self, subreddit: str, thread_ids: List[str]) -> int:
-        """
-        Add thread IDs to the database with deduplication.
-
-        Args:
-            subreddit: Subreddit name
-            thread_ids: List of thread IDs
-
-        Returns:
-            Number of new thread IDs added
-        """
-        added = 0
-
-        with self.transaction() as cursor:
-            for thread_id in thread_ids:
-                try:
-                    cursor.execute("""
-                        INSERT OR IGNORE INTO thread_ids (thread_id, subreddit)
-                        VALUES (?, ?)
-                    """, (thread_id, subreddit.lower()))
-
-                    if cursor.rowcount > 0:
-                        added += 1
-                except Exception as e:
-                    logging.error(f"Error adding thread ID {thread_id}: {e}")
-
-        return added
+            """, (status, error_message, name.lower()))
 
     def update_subreddit(self, subreddit: str, status: str,
                         error_message: Optional[str] = None,
-                        increment_retry: bool = False,
-                        metadata_collected: Optional[bool] = None,
-                        threads_collected: Optional[bool] = None):
+                        metadata_collected: Optional[bool] = None):
         """
         Update subreddit processing status and flags.
 
@@ -646,118 +703,64 @@ class Database:
             subreddit: Subreddit name
             status: Processing status
             error_message: Error message (optional)
-            increment_retry: Whether to increment retry counter
             metadata_collected: Whether metadata has been collected (optional)
-            threads_collected: Whether thread IDs have been collected (optional)
         """
-        now = int(time.time())
-
         with self.transaction() as cursor:
-            if increment_retry:
-                cursor.execute("""
-                    UPDATE subreddits SET
-                        status = ?,
-                        last_checked = ?,
-                        error_message = ?,
-                        retry_count = retry_count + 1
-                    WHERE name = ?
-                """, (status, now, error_message, subreddit.lower()))
-            else:
-                # Build UPDATE statement dynamically based on what needs updating
-                updates = ["status = ?", "last_checked = ?", "error_message = ?"]
-                params = [status, now, error_message]
+            # Build UPDATE statement dynamically based on what needs updating
+            updates = ["status = ?", "error_message = ?"]
+            params = [status, error_message]
 
-                if metadata_collected is not None:
-                    updates.append("metadata_collected = ?")
-                    params.append(metadata_collected)
+            if metadata_collected is not None:
+                updates.append("metadata_collected = ?")
+                params.append(metadata_collected)
 
-                if threads_collected is not None:
-                    updates.append("threads_collected = ?")
-                    params.append(threads_collected)
+            params.append(subreddit.lower())
 
-                params.append(subreddit.lower())
+            query = f"""
+                UPDATE subreddits SET
+                    {', '.join(updates)}
+                WHERE name = ?
+            """
 
-                query = f"""
-                    UPDATE subreddits SET
-                        {', '.join(updates)}
-                    WHERE name = ?
-                """
+            cursor.execute(query, params)
 
-                cursor.execute(query, params)
-
-    def get_pending_subreddits(self, limit: Optional[int] = None, mode: str = 'metadata') -> List[str]:
+    def get_pending_subreddits(self, limit: Optional[int] = None) -> List[str]:
         """
-        Get subreddits pending processing based on mode.
+        Get subreddits pending metadata collection.
 
         Priority order:
         1. Subreddits without subscriber counts (NULL subscribers) - process FIRST
-        2. Never processed subreddits (pending/error with retry < 3) - by subscriber count DESC
+        2. Never processed subreddits (pending/error) - by subscriber count DESC
 
-        Mode 'metadata':
-        - Returns subreddits where metadata_collected = 0 OR status = 'error'
-        - Includes pending and error states
-
-        Mode 'threads':
-        - Returns subreddits where metadata_collected = 1 AND no threads in thread_ids table
-        - Only active subreddits
+        Returns subreddits where metadata_collected = 0 OR status = 'error'.
 
         Args:
             limit: Maximum number to return
-            mode: Processing mode ('metadata' or 'threads')
 
         Returns:
             List of subreddit names
         """
         cursor = self.conn.cursor()
 
-        if mode == 'metadata':
-            # Metadata mode: Get subreddits that need metadata collection or failed
-            # Priority: NULL subscribers first, then by subscriber count DESC
-            if limit:
-                cursor.execute("""
-                    SELECT name FROM subreddits
-                    WHERE (metadata_collected = 0 OR status = 'error' OR status = 'pending')
-                    AND retry_count < 3
-                    ORDER BY
-                        CASE WHEN subscribers IS NULL THEN 0 ELSE 1 END,
-                        subscribers DESC NULLS LAST,
-                        retry_count ASC
-                    LIMIT ?
-                """, (limit,))
-            else:
-                cursor.execute("""
-                    SELECT name FROM subreddits
-                    WHERE (metadata_collected = 0 OR status = 'error' OR status = 'pending')
-                    AND retry_count < 3
-                    ORDER BY
-                        CASE WHEN subscribers IS NULL THEN 0 ELSE 1 END,
-                        subscribers DESC NULLS LAST,
-                        retry_count ASC
-                """)
-        elif mode == 'threads':
-            # Threads mode: Get subreddits that need thread ID collection
-            # Must have metadata collected and threads not yet collected
-            if limit:
-                cursor.execute("""
-                    SELECT name FROM subreddits
-                    WHERE metadata_collected = 1
-                    AND threads_collected = 0
-                    AND retry_count < 3
-                    AND status IN ('active', 'completed')
-                    ORDER BY subscribers DESC NULLS LAST, retry_count ASC
-                    LIMIT ?
-                """, (limit,))
-            else:
-                cursor.execute("""
-                    SELECT name FROM subreddits
-                    WHERE metadata_collected = 1
-                    AND threads_collected = 0
-                    AND retry_count < 3
-                    AND status IN ('active', 'completed')
-                    ORDER BY subscribers DESC NULLS LAST, retry_count ASC
-                """)
+        # Get subreddits that need metadata collection or failed
+        # Priority: NULL subscribers first, then by subscriber count DESC
+        if limit:
+            cursor.execute("""
+                SELECT name FROM subreddits
+                WHERE (metadata_collected = 0 OR status = 'error' OR status = 'pending')
+                ORDER BY
+                    CASE WHEN subscribers IS NULL THEN 0 ELSE 1 END,
+                    subscribers DESC NULLS LAST
+                LIMIT ?
+            """, (limit,))
         else:
-            raise ValueError(f"Invalid mode: {mode}. Must be 'metadata' or 'threads'")
+            cursor.execute("""
+                SELECT name FROM subreddits
+                WHERE (metadata_collected = 0 OR status = 'error' OR status = 'pending')
+                ORDER BY
+                    CASE WHEN subscribers IS NULL THEN 0 ELSE 1 END,
+                    subscribers DESC NULLS LAST
+            """)
 
         return [row[0] for row in cursor.fetchall()]
 
@@ -777,10 +780,6 @@ class Database:
         """)
         stats = dict(cursor.fetchall())
 
-        # Total thread IDs
-        cursor.execute("SELECT COUNT(*) FROM thread_ids")
-        stats['total_threads'] = cursor.fetchone()[0]
-
         # Total subreddits
         cursor.execute("SELECT COUNT(*) FROM subreddits")
         stats['total_subreddits'] = cursor.fetchone()[0]
@@ -792,16 +791,8 @@ class Database:
         cursor.execute("""
             SELECT COUNT(*) FROM subreddits
             WHERE (metadata_collected = 0 OR status = 'error' OR status = 'pending')
-            AND retry_count < 3
         """)
         stats['metadata_pending'] = cursor.fetchone()[0]
-
-        # Thread collection stats
-        cursor.execute("SELECT COUNT(*) FROM subreddits WHERE threads_collected = 1")
-        stats['threads_collected'] = cursor.fetchone()[0]
-
-        cursor.execute("SELECT COUNT(*) FROM subreddits WHERE threads_collected = 0")
-        stats['threads_pending'] = cursor.fetchone()[0]
 
         return stats
 
@@ -818,14 +809,10 @@ class Database:
             count = cursor.fetchone()[0]
 
             if count > 0:
-                # Remove thread_ids first (foreign key)
-                cursor.execute("DELETE FROM thread_ids WHERE subreddit LIKE 'u_%'")
-                threads_removed = cursor.rowcount
-
                 # Remove subreddits
                 cursor.execute("DELETE FROM subreddits WHERE name LIKE 'u_%'")
 
-                logging.info(f"Cleaned up {count} user profiles (u_*) and {threads_removed} associated threads")
+                logging.info(f"Cleaned up {count} user profiles (u_*)")
 
             return count
 
@@ -846,7 +833,7 @@ class Database:
             # Fix: status='pending' but metadata_collected=1 -> set metadata_collected=0
             cursor.execute("""
                 UPDATE subreddits
-                SET metadata_collected = 0, threads_collected = 0
+                SET metadata_collected = 0
                 WHERE status = 'pending' AND metadata_collected = 1
             """)
             fixed['pending_with_metadata'] = cursor.rowcount
@@ -917,25 +904,6 @@ class Database:
         if row:
             return dict(row)
         return None
-
-    def get_thread_count(self, subreddit: Optional[str] = None) -> int:
-        """
-        Get count of thread IDs.
-
-        Args:
-            subreddit: Optional subreddit filter
-
-        Returns:
-            Count of thread IDs
-        """
-        cursor = self.conn.cursor()
-
-        if subreddit:
-            cursor.execute("SELECT COUNT(*) FROM thread_ids WHERE subreddit = ?", (subreddit.lower(),))
-        else:
-            cursor.execute("SELECT COUNT(*) FROM thread_ids")
-
-        return cursor.fetchone()[0]
 
     def close(self):
         """Close database connection."""

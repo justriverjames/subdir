@@ -40,13 +40,6 @@ class Config:
     # Processing configuration
     subreddit_cooldown: int = 3  # Minimal cooldown (rate limiter handles pacing)
     max_retries: int = 3
-    fetch_hot: bool = False  # Disabled by default
-    fetch_top_all: bool = True  # Only top all-time by default
-    fetch_top_year: bool = False  # Disabled by default
-    max_threads_per_source: int = 1000
-
-    # Processing mode
-    mode: Optional[str] = None  # 'metadata', 'threads', 'ingest', or None
 
     # Resume configuration
     resume: bool = False
@@ -159,13 +152,6 @@ class Config:
         if self.max_retries < 0:
             raise ValueError("max_retries must be >= 0")
 
-        if self.max_threads_per_source < 1:
-            raise ValueError("max_threads_per_source must be >= 1")
-
-        # Validate that at least one fetch type is enabled (unless metadata mode)
-        if self.mode == 'threads' and not any([self.fetch_hot, self.fetch_top_all, self.fetch_top_year]):
-            raise ValueError("At least one fetch type must be enabled for --threads mode")
-
     def __str__(self) -> str:
         """String representation (without exposing credentials)."""
         return (
@@ -177,9 +163,5 @@ class Config:
             f"  rate_limit={self.rate_limit_per_minute}/min\n"
             f"  subreddit_cooldown={self.subreddit_cooldown}s\n"
             f"  max_retries={self.max_retries}\n"
-            f"  fetch_hot={self.fetch_hot}\n"
-            f"  fetch_top_all={self.fetch_top_all}\n"
-            f"  fetch_top_year={self.fetch_top_year}\n"
-            f"  max_threads_per_source={self.max_threads_per_source}\n"
             f")"
         )
