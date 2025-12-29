@@ -235,10 +235,14 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
+## Disclaimer
+
+SubDir is not affiliated with, endorsed by, or connected to Reddit, Inc. All data is collected through Reddit's public API in accordance with their API terms of service. Subreddit names, descriptions, and metadata are property of their respective communities and Reddit, Inc.
+
+---
+
 ## Credits
 
 **Built for [Redditarr](https://github.com/justriverjames/redditarr)** and the selfhosted community.
 
----
-
-**Current Stats:** 29,404 subreddits | 8.7MB database | Updated December 2025
+**Live Site:** https://subdir.justriverjames.com
