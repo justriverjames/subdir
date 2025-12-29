@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
         subscribers, active_users, over_18,
         subreddit_type, created_utc, status, last_updated,
         category, tags, language,
+        icon_url, primary_color, advertiser_category,
         CASE
           WHEN LOWER(name) = ? THEN 1
           WHEN LOWER(name) LIKE ? THEN 2

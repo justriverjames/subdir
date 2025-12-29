@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "SubDir - Subreddit Directory",
-  description: "A searchable directory of 29,000+ subreddits with metadata",
+  description: "A searchable directory of subreddits with metadata - find communities, discover content",
 };
 
 export default function RootLayout({

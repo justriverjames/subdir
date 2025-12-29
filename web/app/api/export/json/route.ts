@@ -7,6 +7,8 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const format = searchParams.get('format') || 'full'; // 'full' or 'minimal'
   const categoryParam = searchParams.get('category');
+  const modeParam = searchParams.get('mode'); // 'all', 'sfw', 'nsfw'
+  const limitParam = searchParams.get('limit');
 
   try {
     const db = getDb();
@@ -40,7 +42,21 @@ export async function GET(request: NextRequest) {
       params.push(categoryParam);
     }
 
+    // Add NSFW filter if mode specified
+    if (modeParam === 'sfw') {
+      sql += ` AND over_18 = 0`;
+    } else if (modeParam === 'nsfw') {
+      sql += ` AND over_18 = 1`;
+    }
+
     sql += ` ORDER BY subscribers DESC NULLS LAST`;
+
+    // Add limit if specified
+    if (limitParam) {
+      const limit = Math.min(parseInt(limitParam), 10000);
+      sql += ` LIMIT ?`;
+      params.push(limit);
+    }
 
     const stmt = db.prepare(sql);
     const rows = stmt.all(...params);

@@ -40,6 +40,11 @@ class SubredditScanner:
         self.running = False
         self.shutdown_requested = False
 
+        # Processing mode and limits
+        self.mode: Optional[str] = None  # 'metadata', 'update', or 'threads'
+        self.limit: Optional[int] = None  # Batch limit
+        self.csv_path: Optional[str] = None  # CSV file for scan-csv mode
+
         # Initialize components
         self.db = Database(config.db_path)
         self.rate_limiter = SlidingWindowRateLimiter(
@@ -151,6 +156,13 @@ class SubredditScanner:
             # Fetch subreddit metadata
             metadata, status = await self.reddit_client.get_subreddit_info(subreddit)
 
+            # Skip if it's a user profile (and remove from DB)
+            if metadata and metadata.get('subreddit_type') == 'user':
+                self.db.conn.execute("DELETE FROM subreddits WHERE name = ?", (subreddit,))
+                self.db.conn.commit()
+                logging.info(f"⏭️  r/{subreddit:<25} (user profile, removed)")
+                return True
+
             if status == 'active' and metadata:
                 # Update database with metadata
                 self.db.update_subreddit_metadata(subreddit, metadata)
@@ -211,44 +223,60 @@ class SubredditScanner:
         if sum(fixed.values()) > 0:
             logging.info(f"Fixed {sum(fixed.values())} inconsistent database states")
 
-        # Get initial counts
-        stats = self.db.get_processing_stats()
-        pending = len(self.db.get_pending_subreddits())
+        # Determine which subreddits to process based on mode
+        if self.mode == 'update':
+            # UPDATE mode: Refresh existing subreddits
+            subreddits_to_process = self.db.get_subreddits_for_update(limit=self.limit)
+            mode_desc = "subreddits to UPDATE"
+        else:
+            # METADATA mode: Process NEW subreddits
+            subreddits_to_process = self.db.get_pending_subreddits(limit=self.limit)
+            mode_desc = "subreddits need metadata"
+
+        total_to_process = len(subreddits_to_process)
 
         print("=" * 80)
-        print(f"🚀 Starting Scanner - Subreddit Metadata Collection")
-        print(f"   {pending:,} subreddits need metadata")
+        if self.mode == 'update':
+            print(f"🔄 Starting Scanner - Metadata UPDATE (Refresh)")
+        else:
+            print(f"🚀 Starting Scanner - Metadata Collection (NEW)")
+        print(f"   {total_to_process:,} {mode_desc}")
+        if self.limit:
+            print(f"   Limited to: {self.limit:,} subreddits")
         print("=" * 80)
         print()
 
         try:
-            while not self.shutdown_requested:
-                # Get pending subreddits
-                pending = self.db.get_pending_subreddits(limit=1)
+            if total_to_process == 0:
+                print()
+                logging.info("✅ No subreddits to process!")
+            else:
+                for idx, subreddit in enumerate(subreddits_to_process):
+                    if self.shutdown_requested:
+                        break
 
-                if not pending:
-                    print()
-                    logging.info("✅ All subreddit metadata collected!")
-                    break
+                    # Process subreddit
+                    await self.process_subreddit(subreddit)
 
-                subreddit = pending[0]
+                    # Show live progress after each subreddit
+                    self._show_progress(idx + 1, total_to_process)
 
-                # Process subreddit
-                await self.process_subreddit(subreddit)
+                    # Progress report every 10 subreddits
+                    if self.subreddits_processed % 10 == 0:
+                        self._report_progress()
 
-                # Show live progress after each subreddit
-                self._show_progress()
+                    # Cooldown between subreddits
+                    if not self.shutdown_requested and self.config.subreddit_cooldown > 0:
+                        await asyncio.sleep(self.config.subreddit_cooldown)
 
-                # Progress report every 10 subreddits
-                if self.subreddits_processed % 10 == 0:
-                    self._report_progress()
+                # Final report
+                print()
+                if idx + 1 >= total_to_process and not self.shutdown_requested:
+                    if self.mode == 'update':
+                        logging.info("✅ All subreddit metadata updated!")
+                    else:
+                        logging.info("✅ All subreddit metadata collected!")
 
-                # Cooldown between subreddits
-                if not self.shutdown_requested and self.config.subreddit_cooldown > 0:
-                    await asyncio.sleep(self.config.subreddit_cooldown)
-
-            # Final report
-            print()
             self._report_final()
 
         except Exception as e:
@@ -256,20 +284,16 @@ class SubredditScanner:
         finally:
             self.running = False
 
-    def _show_progress(self):
+    def _show_progress(self, current: int, total: int):
         """Show live progress line after each subreddit."""
-        stats = self.db.get_processing_stats()
         elapsed = time.time() - self.start_time
-        total = stats.get('total_subreddits', 0)
-
-        completed = stats.get('metadata_collected', 0)
-        pending = stats.get('metadata_pending', 0)
 
         # Calculate rate and ETA
         if elapsed > 0:
             subs_per_hour = (self.subreddits_processed / elapsed) * 3600
+            remaining = total - current
             if subs_per_hour > 0:
-                hours_remaining = pending / subs_per_hour
+                hours_remaining = remaining / subs_per_hour
                 eta_hours = int(hours_remaining)
                 eta_minutes = int((hours_remaining - eta_hours) * 60)
                 eta_str = f"{eta_hours}h {eta_minutes}m"
@@ -280,11 +304,11 @@ class SubredditScanner:
             eta_str = "calculating..."
 
         # Progress percentage
-        progress_pct = (completed / total * 100) if total > 0 else 0
+        progress_pct = (current / total * 100) if total > 0 else 0
 
         # Clean progress line
         print(
-            f"   Progress: {completed:>5}/{total} ({progress_pct:>5.1f}%)  |  "
+            f"   Progress: {current:>5}/{total} ({progress_pct:>5.1f}%)  |  "
             f"{subs_per_hour:>5.1f} subs/hr  |  "
             f"ETA: {eta_str:<10}"
         )
@@ -363,6 +387,183 @@ class SubredditScanner:
         print(f"  Success rate:        {reddit_stats['success_rate']*100:>7.1f}%")
         print(f"  Rate limit hits:     {reddit_stats['rate_limit_hits']:>8}")
         print("=" * 80)
+
+    async def run_csv_scan(self):
+        """
+        SCAN-CSV mode: Atomic processing from CSV file.
+
+        For each subreddit in CSV:
+        1. Check if already in DB (duplicate) → remove from CSV
+        2. If not in DB → fetch from Reddit API, save to DB, remove from CSV
+        3. Write CSV back to disk after each batch
+
+        CSV shrinks as we process. Safe and resumable.
+        """
+        import csv
+        from pathlib import Path
+
+        self.running = True
+        self.start_time = time.time()
+
+        csv_path = Path(self.csv_path)
+        if not csv_path.exists():
+            logging.error(f"CSV file not found: {self.csv_path}")
+            return
+
+        print("=" * 80)
+        print(f"📄 Loading CSV: {csv_path}")
+        print("=" * 80)
+
+        # Load entire CSV into memory
+        csv_rows = []
+        with open(csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get('subreddit'):
+                    csv_rows.append(row)
+
+        initial_count = len(csv_rows)
+        limit = self.limit if self.limit else len(csv_rows)
+
+        print(f"CSV contains: {initial_count:,} subreddits")
+        print(f"Will process: {min(limit, initial_count):,} subreddits")
+        print("=" * 80)
+        print()
+
+        processed = 0
+        duplicates_removed = 0
+        scanned_and_saved = 0
+        errors = 0
+
+        try:
+            rows_to_keep = []
+
+            for idx, row in enumerate(csv_rows):
+                if self.shutdown_requested:
+                    logging.info("Shutdown requested, saving progress...")
+                    rows_to_keep.extend(csv_rows[idx:])  # Keep unprocessed rows
+                    break
+
+                if processed >= limit:
+                    # Reached limit, keep remaining rows
+                    rows_to_keep.extend(csv_rows[idx:])
+                    break
+
+                subreddit = row['subreddit'].strip().lower()
+
+                # Check if already in database
+                existing = self.db.conn.execute(
+                    "SELECT name FROM subreddits WHERE name = ?",
+                    (subreddit,)
+                ).fetchone()
+
+                if existing:
+                    # Duplicate - remove from CSV (don't keep this row)
+                    duplicates_removed += 1
+                    logging.info(f"⏭️  r/{subreddit:<25} (duplicate, removed from CSV)")
+                else:
+                    # Not in DB - fetch from Reddit API
+                    try:
+                        # Add to DB as pending first
+                        self.db.add_subreddit(subreddit)
+
+                        # Fetch metadata
+                        metadata, status = await self.reddit_client.get_subreddit_info(subreddit)
+
+                        # Skip if it's a user profile (and remove from DB)
+                        if metadata and metadata.get('subreddit_type') == 'user':
+                            self.db.conn.execute("DELETE FROM subreddits WHERE name = ?", (subreddit,))
+                            self.db.conn.commit()
+                            logging.info(f"⏭️  r/{subreddit:<25} (user profile, skipped)")
+                            continue
+
+                        if status == 'active' and metadata:
+                            # Save metadata
+                            self.db.update_subreddit_metadata(subreddit, metadata)
+                            self.db.update_subreddit(
+                                subreddit, 'active', None,
+                                metadata_collected=True
+                            )
+
+                            subscribers = metadata.get('subscribers', 0) or 0
+                            nsfw_flag = '🔞' if metadata.get('over18', False) else '  '
+                            logging.info(
+                                f"✓ r/{subreddit:<25} {nsfw_flag} {subscribers:>12,} subs (scanned & saved)"
+                            )
+                            scanned_and_saved += 1
+                        else:
+                            # Non-active (deleted/banned/private)
+                            self.db.update_subreddit_status(subreddit, status)
+                            self.db.update_subreddit(
+                                subreddit, status, f"Status: {status}",
+                                metadata_collected=True
+                            )
+                            logging.warning(f"⚠️  r/{subreddit:<25} - {status} (saved status)")
+                            scanned_and_saved += 1
+
+                        # Successfully processed - DON'T keep this row
+
+                    except Exception as e:
+                        logging.error(f"❌ r/{subreddit} - Error: {e}")
+                        errors += 1
+                        # Keep row on error so we can retry later
+                        rows_to_keep.append(row)
+
+                processed += 1
+
+                # Show progress every 10 subreddits
+                if processed % 10 == 0:
+                    print()
+                    print(f"   Progress: {processed}/{min(limit, initial_count)} | "
+                          f"Scanned: {scanned_and_saved} | "
+                          f"Duplicates removed: {duplicates_removed} | "
+                          f"Errors: {errors}")
+                    print()
+
+                # Cooldown
+                if not self.shutdown_requested and self.config.subreddit_cooldown > 0:
+                    await asyncio.sleep(self.config.subreddit_cooldown)
+
+            # Write updated CSV (only rows we're keeping)
+            print()
+            print("=" * 80)
+            print("💾 Updating CSV file...")
+
+            with open(csv_path, 'w', newline='') as f:
+                if rows_to_keep:
+                    writer = csv.DictWriter(f, fieldnames=['subreddit', 'subscribers'])
+                    writer.writeheader()
+                    writer.writerows(rows_to_keep)
+                else:
+                    # Empty CSV - write just header
+                    writer = csv.DictWriter(f, fieldnames=['subreddit', 'subscribers'])
+                    writer.writeheader()
+
+            final_count = len(rows_to_keep)
+            removed_total = initial_count - final_count
+
+            print(f"✓ CSV updated:")
+            print(f"  Started with:        {initial_count:,} subreddits")
+            print(f"  Removed from CSV:    {removed_total:,} (scanned + duplicates)")
+            print(f"  Remaining in CSV:    {final_count:,}")
+            print("=" * 80)
+            print()
+
+            # Final report
+            print("=" * 80)
+            print("📊 CSV Scan Complete")
+            print("=" * 80)
+            print(f"  Processed:           {processed:,}")
+            print(f"  Scanned & saved:     {scanned_and_saved:,}")
+            print(f"  Duplicates removed:  {duplicates_removed:,}")
+            print(f"  Errors:              {errors:,}")
+            print(f"  Remaining in CSV:    {final_count:,}")
+            print("=" * 80)
+
+        except Exception as e:
+            logging.error(f"CSV scan error: {e}", exc_info=True)
+        finally:
+            self.running = False
 
     async def shutdown(self):
         """Shutdown scanner and cleanup resources."""

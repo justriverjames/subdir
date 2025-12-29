@@ -71,29 +71,29 @@ def create_parser() -> ArgumentParser:
         formatter_class=RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Step 1: Ingest subreddits from CSV (only adds NEW subreddits)
-  python main.py --ingest
+  # SCAN subreddits from CSV (atomic: fetch + save + remove from CSV)
+  python main.py --scan-csv --csv ../data/subreddits_to_scan.csv --limit 100
 
-  # Step 2: Collect metadata for all subreddits
-  python main.py --metadata
+  # UPDATE metadata for existing subreddits (refresh data)
+  python main.py --update --limit 100
 
-  # Step 3: Collect thread IDs for subreddits with metadata
-  python main.py --threads
+  # Collect metadata for subreddits already in DB (legacy mode)
+  python main.py --metadata --limit 100
 
-  # Maintenance: Remove user profiles (u_*) from database
-  python main.py --cleanup
+  # RECOMMENDED WORKFLOW:
+  # 1. Scan new subreddits (processes & removes from CSV as you go)
+  python main.py --scan-csv --csv ../data/subreddits_to_scan.csv --limit 1000
+
+  # 2. Update existing subreddits periodically (keeps data fresh)
+  python main.py --update --limit 1000
 
   # Maintenance: Compact database and reclaim space
   python main.py --vacuum
-
-  # Custom database location
-  python main.py --metadata --db custom.db
 
 Alternative (from parent directory):
   python -m subreddit_scanner --ingest
   python -m subreddit_scanner --metadata
   python -m subreddit_scanner --threads
-  python -m subreddit_scanner --cleanup
   python -m subreddit_scanner --vacuum
 
 Environment variables:
@@ -111,27 +111,33 @@ Environment variables:
     mode_group = parser.add_mutually_exclusive_group(required=True)
 
     mode_group.add_argument(
+        '--scan-csv',
+        action='store_true',
+        help='SCAN subreddits from CSV (atomic: fetch + save + remove from CSV)'
+    )
+
+    mode_group.add_argument(
         '--ingest',
         action='store_true',
-        help='Ingest NEW subreddits from subreddits-list.csv (skips existing)'
+        help='[DEPRECATED] Ingest NEW subreddits from CSV (use --scan-csv instead)'
     )
 
     mode_group.add_argument(
         '--metadata',
         action='store_true',
-        help='Collect metadata for subreddits (fast pass)'
+        help='Collect metadata for NEW subreddits already in DB (pending only)'
+    )
+
+    mode_group.add_argument(
+        '--update',
+        action='store_true',
+        help='UPDATE metadata for existing subreddits (refresh data)'
     )
 
     mode_group.add_argument(
         '--threads',
         action='store_true',
         help='Collect thread IDs for subreddits with metadata'
-    )
-
-    mode_group.add_argument(
-        '--cleanup',
-        action='store_true',
-        help='Clean up user profiles (u_*) from database'
     )
 
     mode_group.add_argument(
@@ -159,12 +165,19 @@ Environment variables:
         help='Logging level (default: INFO)'
     )
 
-    # CSV file path (optional, defaults to subreddits-list.csv in current directory)
+    # CSV file path
     parser.add_argument(
         '--csv',
         type=str,
-        default='subreddits-list.csv',
-        help='Path to CSV file for --ingest mode (default: subreddits-list.csv)'
+        default='../data/subreddits_to_scan.csv',
+        help='Path to CSV file (default: ../data/subreddits_to_scan.csv)'
+    )
+
+    # Batch limiting
+    parser.add_argument(
+        '--limit',
+        type=int,
+        help='Limit number of subreddits to process (for testing or batching)'
     )
 
     # Rate limiting options
@@ -219,14 +232,16 @@ async def main():
         config = Config.from_env(args.env_file)
 
         # Determine mode
-        if args.ingest:
+        if args.scan_csv:
+            mode = 'scan_csv'
+        elif args.ingest:
             mode = 'ingest'
         elif args.metadata:
             mode = 'metadata'
+        elif args.update:
+            mode = 'update'
         elif args.threads:
             mode = 'threads'
-        elif args.cleanup:
-            mode = 'cleanup'
         elif args.vacuum:
             mode = 'vacuum'
         else:
@@ -280,41 +295,15 @@ async def main():
             await scanner.shutdown()
             return 0
 
-        elif args.cleanup:
-            # Cleanup mode: Remove user profiles (u_*) from database
-            logging.info("="*60)
-            logging.info("CLEANUP MODE: Removing User Profiles (u_*)")
-            logging.info("="*60)
-
-            removed = scanner.db.cleanup_user_profiles()
-
-            logging.info("")
-            logging.info("="*60)
-            logging.info(f"Cleanup Results:")
-            logging.info(f"  User profiles removed: {removed}")
-            logging.info("")
-
-            if removed > 0:
-                stats = scanner.db.get_processing_stats()
-                logging.info(f"Database now contains:")
-                logging.info(f"  Total subreddits: {stats.get('total_subreddits', 0)}")
-                logging.info(f"  Total threads: {stats.get('total_threads', 0)}")
-                logging.info("")
-                logging.info("⚠️  Run 'python main.py --vacuum' to reclaim disk space")
-
-            logging.info("="*60)
-
-            # Exit after cleanup
-            await scanner.shutdown()
-            return 0
-
         elif args.ingest:
             # Ingest mode: Load CSV and add NEW subreddits only
             logging.info("="*60)
             logging.info("INGEST MODE: Adding NEW Subreddits from CSV")
+            if args.limit:
+                logging.info(f"LIMIT: {args.limit} subreddits")
             logging.info("="*60)
 
-            result = scanner.db.ingest_from_csv(args.csv)
+            result = scanner.db.ingest_from_csv(args.csv, limit=args.limit)
 
             # Show ingest results
             stats = scanner.db.get_processing_stats()
@@ -339,13 +328,50 @@ async def main():
             await scanner.shutdown()
             return 0
 
-        elif args.metadata or args.threads:
+        elif args.scan_csv:
+            # SCAN-CSV mode: Atomic processing (fetch + save + remove from CSV)
+            logging.info("="*60)
+            logging.info("SCAN-CSV MODE: Atomic Processing")
+            if args.limit:
+                logging.info(f"LIMIT: {args.limit} subreddits")
+            logging.info(f"CSV: {args.csv}")
+            logging.info("="*60)
+
+            await scanner.initialize()
+
+            # Pass limit and CSV path to scanner
+            scanner.limit = args.limit
+            scanner.csv_path = args.csv
+
+            # Run CSV scanner
+            await scanner.run_csv_scan()
+
+            # Shutdown
+            await scanner.shutdown()
+
+            logging.info("CSV scanning complete")
+            return 0
+
+        elif args.metadata or args.update or args.threads:
             # Processing mode
             await scanner.initialize()
 
-            mode_name = "Metadata Collection" if args.metadata else "Thread ID Collection"
+            # Pass limit and mode to scanner
+            scanner.limit = args.limit
+            scanner.mode = mode
+
+            if args.metadata:
+                mode_name = "Metadata Collection (NEW subreddits)"
+            elif args.update:
+                mode_name = "Metadata Update (REFRESH existing)"
+            else:
+                mode_name = "Thread ID Collection"
+
             logging.info("="*60)
             logging.info(f"PROCESSING MODE: {mode_name}")
+            if args.limit:
+                logging.info(f"LIMIT: {args.limit} subreddits")
+            logging.info("="*60)
             logging.info("="*60)
 
             # Check if we have subreddits to process

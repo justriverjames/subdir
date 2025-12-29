@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
 
+from database_migrations import migrate_v1_to_v2, migrate_v2_to_v3, ensure_v4_columns
+
 
 class Database:
     """SQLite database manager for subreddit scanning."""
@@ -21,8 +23,7 @@ class Database:
         name TEXT PRIMARY KEY,
         -- Metadata from Reddit API
         title TEXT,
-        description TEXT,
-        public_description TEXT,
+        description TEXT,  -- Short description (from public_description in API)
         subscribers INTEGER,
         active_users INTEGER,
         over_18 BOOLEAN,
@@ -36,12 +37,20 @@ class Database:
         submission_type TEXT,
         allow_images BOOLEAN DEFAULT 1,
         allow_videos BOOLEAN DEFAULT 1,
+        allow_galleries BOOLEAN DEFAULT 0,
+        allow_videogifs BOOLEAN DEFAULT 0,
+        allow_polls BOOLEAN DEFAULT 0,
+        -- Community quality indicators
+        link_flair_enabled BOOLEAN DEFAULT 0,
+        spoilers_enabled BOOLEAN DEFAULT 0,
+        whitelist_status INTEGER,
         -- Search and discovery fields
         category TEXT,
         tags TEXT,
         language TEXT DEFAULT 'en',
         -- Status and processing tracking
         status TEXT,  -- 'pending', 'active', 'private', 'banned', 'quarantined', 'deleted', 'error'
+        is_accessible BOOLEAN DEFAULT 1,  -- 0 for banned/deleted/private/quarantined (quick filter)
         last_updated INTEGER,
         error_message TEXT,
         metadata_collected BOOLEAN DEFAULT 0
@@ -120,11 +129,11 @@ class Database:
             logging.info(f"Migrating database from version {current_version} to {self.SCHEMA_VERSION}...")
 
             if current_version == 1:
-                self._migrate_v1_to_v2()
+                migrate_v1_to_v2(self.conn)
                 current_version = 2
 
             if current_version == 2:
-                self._migrate_v2_to_v3()
+                migrate_v2_to_v3(self.conn)
                 current_version = 3
 
             # Update version
@@ -137,243 +146,8 @@ class Database:
                 f"Please update the scanner code."
             )
 
-    def _migrate_v1_to_v2(self):
-        """Migrate from schema v1 to v2: merge processing_state into subreddits, simplify thread_ids."""
-        cursor = self.conn.cursor()
-        logging.info("Starting v1→v2 migration...")
-
-        try:
-            # 1. Create new tables with temporary names
-            cursor.executescript("""
-                CREATE TABLE subreddits_v2 (
-                    name TEXT PRIMARY KEY,
-                    title TEXT,
-                    description TEXT,
-                    public_description TEXT,
-                    subscribers INTEGER,
-                    active_users INTEGER,
-                    over_18 BOOLEAN,
-                    subreddit_type TEXT,
-                    created_utc INTEGER,
-                    status TEXT,
-                    last_updated INTEGER,
-                    last_checked INTEGER,
-                    retry_count INTEGER DEFAULT 0,
-                    error_message TEXT,
-                    metadata_collected BOOLEAN DEFAULT 0,
-                    threads_collected BOOLEAN DEFAULT 0
-                );
-
-                CREATE TABLE thread_ids_v2 (
-                    thread_id TEXT PRIMARY KEY,
-                    subreddit TEXT NOT NULL,
-                    FOREIGN KEY(subreddit) REFERENCES subreddits_v2(name)
-                );
-            """)
-
-            # 2. Check if processing_state table exists (might not if this is a fresh v1 install)
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='processing_state'")
-            has_processing_state = cursor.fetchone() is not None
-
-            # 3. Migrate data (merge processing_state into subreddits if it exists)
-            if has_processing_state:
-                # Check if metadata_collected and threads_collected columns exist in processing_state
-                cursor.execute("PRAGMA table_info(processing_state)")
-                ps_columns = [row[1] for row in cursor.fetchall()]
-                has_metadata_col = 'metadata_collected' in ps_columns
-                has_threads_col = 'threads_collected' in ps_columns
-
-                if has_metadata_col and has_threads_col:
-                    cursor.execute("""
-                        INSERT INTO subreddits_v2
-                        SELECT
-                            s.name,
-                            s.title,
-                            s.description,
-                            s.public_description,
-                            s.subscribers,
-                            s.active_users,
-                            s.over_18,
-                            s.subreddit_type,
-                            s.created_utc,
-                            COALESCE(p.status, s.status, 'pending') as status,
-                            s.last_updated,
-                            s.last_checked,
-                            COALESCE(p.retry_count, 0) as retry_count,
-                            COALESCE(p.error_message, s.error_message) as error_message,
-                            COALESCE(p.metadata_collected, 0) as metadata_collected,
-                            COALESCE(p.threads_collected, 0) as threads_collected
-                        FROM subreddits s
-                        LEFT JOIN processing_state p ON s.name = p.subreddit
-                    """)
-                else:
-                    # Old v1 without metadata_collected columns
-                    cursor.execute("""
-                        INSERT INTO subreddits_v2
-                        SELECT
-                            s.name,
-                            s.title,
-                            s.description,
-                            s.public_description,
-                            s.subscribers,
-                            s.active_users,
-                            s.over_18,
-                            s.subreddit_type,
-                            s.created_utc,
-                            COALESCE(p.status, s.status, 'pending') as status,
-                            s.last_updated,
-                            s.last_checked,
-                            COALESCE(p.retry_count, 0) as retry_count,
-                            COALESCE(p.error_message, s.error_message) as error_message,
-                            CASE WHEN p.status = 'completed' THEN 1 ELSE 0 END as metadata_collected,
-                            CASE WHEN p.status = 'completed' THEN 1 ELSE 0 END as threads_collected
-                        FROM subreddits s
-                        LEFT JOIN processing_state p ON s.name = p.subreddit
-                    """)
-            else:
-                # No processing_state table - just copy subreddits
-                cursor.execute("""
-                    INSERT INTO subreddits_v2
-                    SELECT
-                        name,
-                        title,
-                        description,
-                        public_description,
-                        subscribers,
-                        active_users,
-                        over_18,
-                        subreddit_type,
-                        created_utc,
-                        COALESCE(status, 'pending') as status,
-                        last_updated,
-                        last_checked,
-                        0 as retry_count,
-                        error_message,
-                        0 as metadata_collected,
-                        0 as threads_collected
-                    FROM subreddits
-                """)
-
-            # 4. Migrate thread_ids (drop source and discovered_at columns)
-            cursor.execute("""
-                INSERT INTO thread_ids_v2 (thread_id, subreddit)
-                SELECT DISTINCT thread_id, subreddit
-                FROM thread_ids
-            """)
-
-            # 5. Drop old tables
-            cursor.execute("DROP TABLE IF EXISTS processing_state")
-            cursor.execute("DROP INDEX IF EXISTS idx_processing_state_status")
-            cursor.execute("DROP INDEX IF EXISTS idx_thread_ids_source")
-            cursor.execute("DROP INDEX IF EXISTS idx_subreddits_last_checked")
-            cursor.execute("DROP TABLE thread_ids")
-            cursor.execute("DROP TABLE subreddits")
-
-            # 6. Rename new tables
-            cursor.execute("ALTER TABLE subreddits_v2 RENAME TO subreddits")
-            cursor.execute("ALTER TABLE thread_ids_v2 RENAME TO thread_ids")
-
-            # 7. Create indexes
-            cursor.executescript("""
-                CREATE INDEX idx_thread_ids_subreddit ON thread_ids(subreddit);
-                CREATE INDEX idx_subreddits_status ON subreddits(status);
-                CREATE INDEX idx_subreddits_metadata_collected ON subreddits(metadata_collected);
-                CREATE INDEX idx_subreddits_threads_collected ON subreddits(threads_collected);
-                CREATE INDEX idx_subreddits_retry_count ON subreddits(retry_count);
-                CREATE INDEX idx_subreddits_subscribers ON subreddits(subscribers DESC);
-            """)
-
-            self.conn.commit()
-            logging.info("✓ Schema v1→v2 migration complete")
-
-            # Compact database to reclaim space from dropped tables
-            logging.info("Compacting database (VACUUM)...")
-            cursor.execute("VACUUM")
-            logging.info("✓ Database compacted")
-
-        except Exception as e:
-            self.conn.rollback()
-            logging.error(f"Migration failed: {e}")
-            raise
-
-    def _migrate_v2_to_v3(self):
-        """Migrate from schema v2 to v3: focus on subreddit metadata, drop thread tracking."""
-        cursor = self.conn.cursor()
-        logging.info("Starting v2→v3 migration...")
-
-        try:
-            # 1. Create new subreddits table with v3 schema
-            cursor.execute("""
-                CREATE TABLE subreddits_v3 (
-                    name TEXT PRIMARY KEY,
-                    title TEXT,
-                    description TEXT,
-                    public_description TEXT,
-                    subscribers INTEGER,
-                    active_users INTEGER,
-                    over_18 BOOLEAN,
-                    subreddit_type TEXT,
-                    created_utc INTEGER,
-                    category TEXT,
-                    tags TEXT,
-                    language TEXT DEFAULT 'en',
-                    status TEXT,
-                    last_updated INTEGER,
-                    error_message TEXT,
-                    metadata_collected BOOLEAN DEFAULT 0
-                )
-            """)
-
-            # 2. Copy data from v2 to v3 (excluding threads_collected, retry_count, last_checked)
-            cursor.execute("""
-                INSERT INTO subreddits_v3 (
-                    name, title, description, public_description,
-                    subscribers, active_users, over_18, subreddit_type, created_utc,
-                    category, tags, language,
-                    status, last_updated, error_message, metadata_collected
-                )
-                SELECT
-                    name, title, description, public_description,
-                    subscribers, active_users, over_18, subreddit_type, created_utc,
-                    NULL as category,
-                    NULL as tags,
-                    'en' as language,
-                    status, last_updated, error_message, metadata_collected
-                FROM subreddits
-            """)
-
-            # 3. Drop old tables and indexes
-            cursor.execute("DROP TABLE IF EXISTS thread_ids")
-            cursor.execute("DROP INDEX IF EXISTS idx_thread_ids_subreddit")
-            cursor.execute("DROP INDEX IF EXISTS idx_subreddits_threads_collected")
-            cursor.execute("DROP INDEX IF EXISTS idx_subreddits_retry_count")
-            cursor.execute("DROP TABLE subreddits")
-
-            # 4. Rename new table
-            cursor.execute("ALTER TABLE subreddits_v3 RENAME TO subreddits")
-
-            # 5. Create v3 indexes
-            cursor.executescript("""
-                CREATE INDEX idx_subreddits_status ON subreddits(status);
-                CREATE INDEX idx_subreddits_metadata_collected ON subreddits(metadata_collected);
-                CREATE INDEX idx_subreddits_subscribers ON subreddits(subscribers DESC);
-                CREATE INDEX idx_subreddits_category ON subreddits(category);
-                CREATE INDEX idx_subreddits_language ON subreddits(language);
-                CREATE INDEX idx_subreddits_name_prefix ON subreddits(name COLLATE NOCASE);
-            """)
-
-            self.conn.commit()
-            logging.info("✓ Schema v2→v3 migration complete")
-
-            # Compact database to reclaim space
-            logging.info("Compacting database (VACUUM)...")
-            cursor.execute("VACUUM")
-            logging.info("✓ Database compacted")
-
-        except Exception as e:
-            self.conn.rollback()
-            logging.error(f"Migration failed: {e}")
-            raise
+        # Ensure all columns exist (for v4 schema enhancements)
+        ensure_v4_columns(self.conn)
 
     @contextmanager
     def transaction(self):
@@ -437,7 +211,7 @@ class Database:
         logging.info(f"Added {added} new subreddits to database")
         return added
 
-    def ingest_from_csv(self, csv_path: str) -> Dict[str, int]:
+    def ingest_from_csv(self, csv_path: str, limit: Optional[int] = None) -> Dict[str, int]:
         """
         Ingest NEW subreddits from CSV file (skips existing subreddits).
 
@@ -448,6 +222,7 @@ class Database:
 
         Args:
             csv_path: Path to CSV file
+            limit: Maximum number of subreddits to ingest (optional)
 
         Returns:
             Dictionary with counts: {added, skipped, total}
@@ -462,8 +237,10 @@ class Database:
         added = 0
         skipped = 0
         total = 0
+        processed = 0
 
-        logging.info(f"Ingesting NEW subreddits from {csv_path}...")
+        limit_msg = f" (limit: {limit})" if limit else ""
+        logging.info(f"Ingesting NEW subreddits from {csv_path}{limit_msg}...")
 
         with open(path, 'r') as f:
             reader = csv.reader(f)
@@ -473,6 +250,10 @@ class Database:
 
             with self.transaction() as cursor:
                 for row in reader:
+                    # Check limit
+                    if limit and processed >= limit:
+                        break
+
                     if len(row) < 2:
                         continue
 
@@ -490,6 +271,7 @@ class Database:
                         continue
 
                     total += 1
+                    processed += 1
 
                     # Check if subreddit exists
                     cursor.execute("SELECT name FROM subreddits WHERE name = ?", (subreddit,))
@@ -641,6 +423,7 @@ class Database:
                         active_users = ?,
                         over_18 = ?,
                         status = ?,
+                        is_accessible = 1,
                         subreddit_type = ?,
                         created_utc = ?,
                         last_updated = ?,
@@ -650,11 +433,18 @@ class Database:
                         submission_type = ?,
                         allow_images = ?,
                         allow_videos = ?,
+                        allow_galleries = ?,
+                        allow_videogifs = ?,
+                        allow_polls = ?,
+                        link_flair_enabled = ?,
+                        spoilers_enabled = ?,
+                        whitelist_status = ?,
+                        language = ?,
                         error_message = NULL
                     WHERE name = ?
                 """, (
                     metadata.get('title'),
-                    metadata.get('public_description'),  # Use short description
+                    metadata.get('public_description'),  # Short description -> description
                     metadata.get('subscribers'),
                     metadata.get('active_user_count'),
                     metadata.get('over18', False),
@@ -662,12 +452,19 @@ class Database:
                     metadata.get('subreddit_type'),
                     metadata.get('created_utc'),
                     now,
-                    metadata.get('community_icon'),  # Prefer community_icon over icon_img
+                    self._decode_html_entities(metadata.get('community_icon')),
                     metadata.get('primary_color'),
                     metadata.get('advertiser_category'),
                     metadata.get('submission_type'),
                     metadata.get('allow_images', True),
                     metadata.get('allow_videos', True),
+                    metadata.get('allow_galleries', False),
+                    metadata.get('allow_videogifs', False),
+                    metadata.get('allow_polls', False),
+                    metadata.get('link_flair_enabled', False),
+                    metadata.get('spoilers_enabled', False),
+                    metadata.get('wls'),
+                    metadata.get('lang', 'en'),
                     name.lower()
                 ))
 
@@ -678,20 +475,25 @@ class Database:
 
     def update_subreddit_status(self, name: str, status: str, error_message: Optional[str] = None):
         """
-        Update subreddit status.
+        Update subreddit status and accessibility.
 
         Args:
             name: Subreddit name
             status: Status string
             error_message: Optional error message
         """
+        # Determine if subreddit is accessible
+        # Only 'active' and 'pending' are accessible
+        is_accessible = 1 if status in ('active', 'pending') else 0
+
         with self.transaction() as cursor:
             cursor.execute("""
                 UPDATE subreddits SET
                     status = ?,
+                    is_accessible = ?,
                     error_message = ?
                 WHERE name = ?
-            """, (status, error_message, name.lower()))
+            """, (status, is_accessible, error_message, name.lower()))
 
     def update_subreddit(self, subreddit: str, status: str,
                         error_message: Optional[str] = None,
@@ -764,6 +566,51 @@ class Database:
 
         return [row[0] for row in cursor.fetchall()]
 
+    def get_subreddits_for_update(self, limit: Optional[int] = None) -> List[str]:
+        """
+        Get subreddits for metadata refresh/update.
+
+        Two-phase priority order:
+        Phase 1 (never updated): NULL last_updated, ordered by subscribers DESC
+        Phase 2 (maintenance): Oldest last_updated ASC, then subscribers DESC
+
+        This ensures:
+        - First pass: Popular subreddits get updated first (best icons/data for search)
+        - Second pass: Staleness-based maintenance (oldest updates prioritized)
+        - Interrupted runs resume efficiently
+
+        Args:
+            limit: Maximum number to return
+
+        Returns:
+            List of subreddit names
+        """
+        cursor = self.conn.cursor()
+
+        # Phase 1: Never updated (NULL last_updated) - highest subscribers first
+        # Phase 2: Previously updated - oldest last_updated first, then subscribers
+        if limit:
+            cursor.execute("""
+                SELECT name FROM subreddits
+                WHERE metadata_collected = 1 AND status = 'active'
+                ORDER BY
+                    CASE WHEN last_updated IS NULL THEN 0 ELSE 1 END ASC,
+                    CASE WHEN last_updated IS NULL THEN -subscribers ELSE last_updated END ASC,
+                    subscribers DESC NULLS LAST
+                LIMIT ?
+            """, (limit,))
+        else:
+            cursor.execute("""
+                SELECT name FROM subreddits
+                WHERE metadata_collected = 1 AND status = 'active'
+                ORDER BY
+                    CASE WHEN last_updated IS NULL THEN 0 ELSE 1 END ASC,
+                    CASE WHEN last_updated IS NULL THEN -subscribers ELSE last_updated END ASC,
+                    subscribers DESC NULLS LAST
+            """)
+
+        return [row[0] for row in cursor.fetchall()]
+
     def get_processing_stats(self) -> Dict[str, int]:
         """
         Get processing statistics.
@@ -798,21 +645,28 @@ class Database:
 
     def cleanup_user_profiles(self) -> int:
         """
-        Remove user profiles (u_*) from database - these aren't real subreddits.
+        Remove user profiles from database - these aren't real subreddits.
+        Detects user profiles by subreddit_type = 'user' or u_ prefix.
 
         Returns:
             Number of entries removed
         """
         with self.transaction() as cursor:
-            # Count how many we'll remove
-            cursor.execute("SELECT COUNT(*) FROM subreddits WHERE name LIKE 'u_%'")
+            # Count how many we'll remove (both by type and by prefix)
+            cursor.execute(
+                "SELECT COUNT(*) FROM subreddits "
+                "WHERE subreddit_type = 'user' OR name LIKE 'u_%'"
+            )
             count = cursor.fetchone()[0]
 
             if count > 0:
-                # Remove subreddits
-                cursor.execute("DELETE FROM subreddits WHERE name LIKE 'u_%'")
+                # Remove user profiles
+                cursor.execute(
+                    "DELETE FROM subreddits "
+                    "WHERE subreddit_type = 'user' OR name LIKE 'u_%'"
+                )
 
-                logging.info(f"Cleaned up {count} user profiles (u_*)")
+                logging.info(f"Cleaned up {count} user profiles")
 
             return count
 
@@ -851,6 +705,22 @@ class Database:
             logging.info(f"Fixed {total_fixed} inconsistent states in database")
 
         return fixed
+
+    def _decode_html_entities(self, text: Optional[str]) -> Optional[str]:
+        """
+        Decode HTML entities in text (e.g., &amp; -> &).
+
+        Args:
+            text: Text that may contain HTML entities
+
+        Returns:
+            Decoded text or None if input is None
+        """
+        if not text:
+            return text
+
+        import html
+        return html.unescape(text)
 
     def vacuum(self) -> Dict[str, float]:
         """

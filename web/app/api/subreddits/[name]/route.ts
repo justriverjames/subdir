@@ -3,9 +3,10 @@ import { getDb } from '@/lib/db';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { name: string } }
+  { params }: { params: Promise<{ name: string }> }
 ) {
-  const name = params.name.toLowerCase();
+  const { name: paramName } = await params;
+  const name = paramName.toLowerCase();
 
   try {
     const db = getDb();

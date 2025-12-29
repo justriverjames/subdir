@@ -6,6 +6,8 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const categoryParam = searchParams.get('category');
+  const modeParam = searchParams.get('mode'); // 'all', 'sfw', 'nsfw'
+  const limitParam = searchParams.get('limit');
 
   try {
     const db = getDb();
@@ -25,7 +27,21 @@ export async function GET(request: NextRequest) {
       params.push(categoryParam);
     }
 
+    // Add NSFW filter if mode specified
+    if (modeParam === 'sfw') {
+      sql += ` AND over_18 = 0`;
+    } else if (modeParam === 'nsfw') {
+      sql += ` AND over_18 = 1`;
+    }
+
     sql += ` ORDER BY subscribers DESC NULLS LAST`;
+
+    // Add limit if specified
+    if (limitParam) {
+      const limit = Math.min(parseInt(limitParam), 10000);
+      sql += ` LIMIT ?`;
+      params.push(limit);
+    }
 
     const stmt = db.prepare(sql);
     const rows = stmt.all(...params);
@@ -34,16 +50,17 @@ export async function GET(request: NextRequest) {
     const headers = ['name', 'title', 'description', 'subscribers', 'nsfw', 'category', 'language', 'type'];
     const csvRows = [headers.join(',')];
 
-    for (const row: any of rows) {
+    for (const row of rows) {
+      const r = row as any;
       const csvRow = [
-        escapeCSV(row.name),
-        escapeCSV(row.title || ''),
-        escapeCSV(row.description || ''),
-        row.subscribers || '0',
-        row.over_18 ? 'true' : 'false',
-        escapeCSV(row.category || ''),
-        escapeCSV(row.language || 'en'),
-        escapeCSV(row.subreddit_type || 'public'),
+        escapeCSV(r.name),
+        escapeCSV(r.title || ''),
+        escapeCSV(r.description || ''),
+        r.subscribers || '0',
+        r.over_18 ? 'true' : 'false',
+        escapeCSV(r.category || ''),
+        escapeCSV(r.language || 'en'),
+        escapeCSV(r.subreddit_type || 'public'),
       ];
       csvRows.push(csvRow.join(','));
     }
