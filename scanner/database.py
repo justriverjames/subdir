@@ -136,6 +136,10 @@ class Database:
                 migrate_v2_to_v3(self.conn)
                 current_version = 3
 
+            if current_version == 3:
+                # v3→v4: add new metadata columns (handled by ensure_v4_columns below)
+                current_version = 4
+
             # Update version
             cursor.execute("UPDATE schema_version SET version = ?", (current_version,))
             self.conn.commit()
@@ -185,7 +189,7 @@ class Database:
             logging.error(f"Error adding subreddit {name}: {e}")
             return False
 
-    def add_subreddits_bulk(self, names: List[str]) -> int:
+    def update_subreddit_metadata(self, name: str, metadata: Dict[str, Any]) -> bool:
         """
         Add multiple subreddits in bulk.
 
@@ -210,196 +214,6 @@ class Database:
 
         logging.info(f"Added {added} new subreddits to database")
         return added
-
-    def ingest_from_csv(self, csv_path: str, limit: Optional[int] = None) -> Dict[str, int]:
-        """
-        Ingest NEW subreddits from CSV file (skips existing subreddits).
-
-        CSV format: subreddit,subscribers (with header line)
-
-        Only adds subreddits that DON'T exist in the database.
-        Sets initial subscriber count and marks for processing.
-
-        Args:
-            csv_path: Path to CSV file
-            limit: Maximum number of subreddits to ingest (optional)
-
-        Returns:
-            Dictionary with counts: {added, skipped, total}
-        """
-        import csv
-        from pathlib import Path
-
-        path = Path(csv_path)
-        if not path.exists():
-            raise FileNotFoundError(f"CSV file not found: {csv_path}")
-
-        added = 0
-        skipped = 0
-        total = 0
-        processed = 0
-
-        limit_msg = f" (limit: {limit})" if limit else ""
-        logging.info(f"Ingesting NEW subreddits from {csv_path}{limit_msg}...")
-
-        with open(path, 'r') as f:
-            reader = csv.reader(f)
-
-            # Skip header
-            next(reader, None)
-
-            with self.transaction() as cursor:
-                for row in reader:
-                    # Check limit
-                    if limit and processed >= limit:
-                        break
-
-                    if len(row) < 2:
-                        continue
-
-                    subreddit = row[0].strip().lower()
-
-                    # Skip user profiles (u_something) - these aren't real subreddits
-                    if subreddit.startswith('u_'):
-                        skipped += 1
-                        continue
-
-                    try:
-                        subscribers = int(row[1].strip())
-                    except ValueError:
-                        logging.warning(f"Invalid subscriber count for {subreddit}: {row[1]}")
-                        continue
-
-                    total += 1
-                    processed += 1
-
-                    # Check if subreddit exists
-                    cursor.execute("SELECT name FROM subreddits WHERE name = ?", (subreddit,))
-                    result = cursor.fetchone()
-
-                    if not result:
-                        # New subreddit - add with subscriber count
-                        cursor.execute("""
-                            INSERT INTO subreddits (
-                                name, status, subscribers, metadata_collected
-                            )
-                            VALUES (?, 'pending', ?, 0)
-                        """, (subreddit, subscribers))
-
-                        added += 1
-                    else:
-                        # Already exists - skip
-                        skipped += 1
-
-        logging.info(
-            f"CSV ingest complete: {total} total, {added} added, {skipped} skipped (already in DB)"
-        )
-
-        return {
-            'total': total,
-            'added': added,
-            'skipped': skipped
-        }
-
-    def import_subreddits_from_csv(self, csv_path: str) -> Dict[str, int]:
-        """
-        Import subreddits from CSV file with subscriber counts.
-
-        CSV format: subreddit,subscribers (no header)
-
-        For each subreddit:
-        - If not in DB: Add with CSV subscriber count
-        - If in DB and not processed: Update subscriber count
-        - If already processed: Skip (preserve existing data)
-
-        Args:
-            csv_path: Path to CSV file
-
-        Returns:
-            Dictionary with counts: {added, updated, skipped, total}
-        """
-        import csv
-        from pathlib import Path
-
-        path = Path(csv_path)
-        if not path.exists():
-            raise FileNotFoundError(f"CSV file not found: {csv_path}")
-
-        added = 0
-        updated = 0
-        skipped = 0
-        total = 0
-
-        logging.info(f"Importing subreddits from {csv_path}...")
-
-        with open(path, 'r') as f:
-            reader = csv.reader(f)
-
-            with self.transaction() as cursor:
-                for row in reader:
-                    if len(row) < 2:
-                        continue
-
-                    subreddit = row[0].strip().lower()
-
-                    # Skip user profiles (u_something) - these aren't real subreddits
-                    if subreddit.startswith('u_'):
-                        skipped += 1
-                        continue
-
-                    try:
-                        subscribers = int(row[1].strip())
-                    except ValueError:
-                        logging.warning(f"Invalid subscriber count for {subreddit}: {row[1]}")
-                        continue
-
-                    total += 1
-
-                    # Check if subreddit exists and its processing state
-                    cursor.execute("""
-                        SELECT name, status, metadata_collected
-                        FROM subreddits
-                        WHERE name = ?
-                    """, (subreddit,))
-
-                    result = cursor.fetchone()
-
-                    if not result:
-                        # New subreddit - add with subscriber count
-                        cursor.execute("""
-                            INSERT INTO subreddits (
-                                name, status, subscribers, metadata_collected
-                            )
-                            VALUES (?, 'pending', ?, 0)
-                        """, (subreddit, subscribers))
-
-                        added += 1
-
-                    elif result[1] in ('pending', 'error') or result[2] == 0:
-                        # Exists but not processed - update subscriber count
-                        cursor.execute("""
-                            UPDATE subreddits
-                            SET subscribers = ?
-                            WHERE name = ?
-                        """, (subscribers, subreddit))
-
-                        updated += 1
-
-                    else:
-                        # Already processed - skip
-                        skipped += 1
-
-        logging.info(
-            f"CSV import complete: {total} total, {added} added, "
-            f"{updated} updated, {skipped} skipped"
-        )
-
-        return {
-            'total': total,
-            'added': added,
-            'updated': updated,
-            'skipped': skipped
-        }
 
     def update_subreddit_metadata(self, name: str, metadata: Dict[str, Any]) -> bool:
         """
@@ -526,88 +340,96 @@ class Database:
 
             cursor.execute(query, params)
 
-    def get_pending_subreddits(self, limit: Optional[int] = None) -> List[str]:
+    def count_stale_subreddits(self, stale_days: int = 30) -> Dict[str, int]:
         """
-        Get subreddits pending metadata collection.
-
-        Priority order:
-        1. Subreddits without subscriber counts (NULL subscribers) - process FIRST
-        2. Never processed subreddits (pending/error) - by subscriber count DESC
-
-        Returns subreddits where metadata_collected = 0 OR status = 'error'.
+        Count subreddits needing update (never updated or stale).
 
         Args:
-            limit: Maximum number to return
+            stale_days: Minimum days since last update (default 30)
 
         Returns:
-            List of subreddit names
+            Dictionary with counts: never_updated, stale, total_needing_update
         """
+        import time
         cursor = self.conn.cursor()
 
-        # Get subreddits that need metadata collection or failed
-        # Priority: NULL subscribers first, then by subscriber count DESC
-        if limit:
-            cursor.execute("""
-                SELECT name FROM subreddits
-                WHERE (metadata_collected = 0 OR status = 'error' OR status = 'pending')
-                ORDER BY
-                    CASE WHEN subscribers IS NULL THEN 0 ELSE 1 END,
-                    subscribers DESC NULLS LAST
-                LIMIT ?
-            """, (limit,))
-        else:
-            cursor.execute("""
-                SELECT name FROM subreddits
-                WHERE (metadata_collected = 0 OR status = 'error' OR status = 'pending')
-                ORDER BY
-                    CASE WHEN subscribers IS NULL THEN 0 ELSE 1 END,
-                    subscribers DESC NULLS LAST
-            """)
+        stale_cutoff = int(time.time()) - (stale_days * 24 * 60 * 60)
 
-        return [row[0] for row in cursor.fetchall()]
+        # Count never updated
+        cursor.execute("""
+            SELECT COUNT(*) FROM subreddits
+            WHERE metadata_collected = 1 AND status = 'active'
+              AND last_updated IS NULL
+        """)
+        never_updated = cursor.fetchone()[0]
 
-    def get_subreddits_for_update(self, limit: Optional[int] = None) -> List[str]:
+        # Count stale (older than cutoff)
+        cursor.execute("""
+            SELECT COUNT(*) FROM subreddits
+            WHERE metadata_collected = 1 AND status = 'active'
+              AND last_updated IS NOT NULL
+              AND last_updated < ?
+        """, (stale_cutoff,))
+        stale = cursor.fetchone()[0]
+
+        return {
+            'never_updated': never_updated,
+            'stale': stale,
+            'total_needing_update': never_updated + stale,
+            'stale_days': stale_days
+        }
+
+    def get_subreddits_for_update(self, limit: Optional[int] = None, stale_days: int = 30, nsfw_only: bool = False) -> List[str]:
         """
         Get subreddits for metadata refresh/update.
 
-        Two-phase priority order:
-        Phase 1 (never updated): NULL last_updated, ordered by subscribers DESC
-        Phase 2 (maintenance): Oldest last_updated ASC, then subscribers DESC
+        Only returns subreddits that need updating:
+        - Never updated (last_updated IS NULL), OR
+        - Last updated more than stale_days ago
 
-        This ensures:
-        - First pass: Popular subreddits get updated first (best icons/data for search)
-        - Second pass: Staleness-based maintenance (oldest updates prioritized)
-        - Interrupted runs resume efficiently
+        Priority order:
+        Phase 1 (never updated): NULL last_updated, ordered by subscribers DESC
+        Phase 2 (stale): Oldest last_updated first, then subscribers DESC
 
         Args:
             limit: Maximum number to return
+            stale_days: Minimum days since last update (default 30)
+            nsfw_only: Only return NSFW (over_18) subreddits
 
         Returns:
             List of subreddit names
         """
+        import time
         cursor = self.conn.cursor()
 
-        # Phase 1: Never updated (NULL last_updated) - highest subscribers first
-        # Phase 2: Previously updated - oldest last_updated first, then subscribers
+        # Calculate cutoff timestamp (stale_days ago)
+        stale_cutoff = int(time.time()) - (stale_days * 24 * 60 * 60)
+
+        # Build WHERE clause
+        where_clause = "metadata_collected = 1 AND status = 'active' AND (last_updated IS NULL OR last_updated < ?)"
+        if nsfw_only:
+            where_clause += " AND over_18 = 1"
+
+        # Only get subreddits that are stale or never updated
         if limit:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT name FROM subreddits
-                WHERE metadata_collected = 1 AND status = 'active'
+                WHERE {where_clause}
                 ORDER BY
                     CASE WHEN last_updated IS NULL THEN 0 ELSE 1 END ASC,
-                    CASE WHEN last_updated IS NULL THEN -subscribers ELSE last_updated END ASC,
+                    CASE WHEN last_updated IS NULL THEN -COALESCE(subscribers, 0) ELSE last_updated END ASC,
                     subscribers DESC NULLS LAST
                 LIMIT ?
-            """, (limit,))
+            """, (stale_cutoff, limit))
         else:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT name FROM subreddits
-                WHERE metadata_collected = 1 AND status = 'active'
+                WHERE {where_clause}
                 ORDER BY
                     CASE WHEN last_updated IS NULL THEN 0 ELSE 1 END ASC,
-                    CASE WHEN last_updated IS NULL THEN -subscribers ELSE last_updated END ASC,
+                    CASE WHEN last_updated IS NULL THEN -COALESCE(subscribers, 0) ELSE last_updated END ASC,
                     subscribers DESC NULLS LAST
-            """)
+            """, (stale_cutoff,))
 
         return [row[0] for row in cursor.fetchall()]
 

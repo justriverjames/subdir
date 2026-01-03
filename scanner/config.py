@@ -22,8 +22,9 @@ class Config:
     reddit_username: str
     reddit_password: str
 
-    # User agent for Reddit API
-    user_agent: str = "SubredditScanner/1.0.0 (by /u/YOUR_USERNAME)"
+    # User agent for Reddit API (follows Reddit's required format)
+    # Format: platform:app_id:version (description; url by /u/username)
+    user_agent: str = "python:com.github.subdir:v1.0.0 (Subreddit Discovery Tool; https://github.com/justriverjames/subdir by /u/YOUR_USERNAME)"
 
     # Database configuration
     db_path: str = "subreddit_scanner.db"
@@ -32,14 +33,28 @@ class Config:
     log_dir: str = "logs"
     log_level: str = "INFO"
 
-    # Rate limiting configuration (optimized for 2025 Reddit API limits)
-    rate_limit_per_minute: int = 85  # Conservative buffer from 90-100 limit
-    rate_limit_per_10s: int = 14  # Burst protection
+    # Rate limiting configuration (conservative for 2025 Reddit API)
+    # Official limit: 100 QPM, but enforced closer to 60 QPM
+    rate_limit_per_minute: int = 50  # Well under 60 to avoid detection
+    rate_limit_per_10s: int = 10  # Burst protection
     rate_limit_per_1s: int = 2  # Spike protection
 
-    # Processing configuration
-    subreddit_cooldown: int = 3  # Minimal cooldown (rate limiter handles pacing)
+    # Processing configuration (adds human-like delays)
+    min_request_delay: float = 2.5  # Minimum delay between requests (seconds)
+    max_request_delay: float = 6.0  # Maximum delay between requests (seconds)
+    subreddit_cooldown: int = 3  # Base cooldown
     max_retries: int = 3
+
+    # Anti-detection features
+    shuffle_order: bool = True  # Randomize subreddit processing order
+    request_diversity: bool = True  # Mix in non-metadata requests
+    batch_pause_interval: int = 75  # Pause every N subreddits
+    batch_pause_min: float = 30.0  # Minimum pause duration (seconds)
+    batch_pause_max: float = 60.0  # Maximum pause duration (seconds)
+
+    # Auto-terminate thresholds (stop before getting banned)
+    max_consecutive_403: int = 10  # Stop after N consecutive 403s
+    max_total_429: int = 3  # Stop after N total 429s (rate limit hits)
 
     # Resume configuration
     resume: bool = False
@@ -101,7 +116,7 @@ class Config:
             reddit_client_secret=client_secret,
             reddit_username=username,
             reddit_password=password,
-            user_agent=os.getenv('USER_AGENT', f"SubredditScanner/1.0.0 (by /u/{username})"),
+            user_agent=os.getenv('USER_AGENT', f"python:com.github.subdir:v1.0.0 (Subreddit Discovery Tool; https://github.com/justriverjames/subdir by /u/{username})"),
             db_path=os.getenv('SCANNER_DB_PATH', 'subreddit_scanner.db'),
             log_dir=os.getenv('SCANNER_LOG_DIR', 'logs'),
             log_level=os.getenv('LOG_LEVEL', 'INFO'),

@@ -8,6 +8,7 @@ import asyncio
 import logging
 import signal
 import time
+import random
 from pathlib import Path
 from typing import Optional, List
 
@@ -44,6 +45,7 @@ class SubredditScanner:
         self.mode: Optional[str] = None  # 'metadata', 'update', or 'threads'
         self.limit: Optional[int] = None  # Batch limit
         self.csv_path: Optional[str] = None  # CSV file for scan-csv mode
+        self.nsfw_only: bool = False  # Filter for NSFW subreddits only
 
         # Initialize components
         self.db = Database(config.db_path)
@@ -59,6 +61,14 @@ class SubredditScanner:
         self.subreddits_processed = 0
         self.subreddits_failed = 0
 
+        # Error tracking for auto-termination
+        self.consecutive_403s = 0
+        self.total_429s = 0
+
+        # Track recent successes to distinguish real 403s from throttling
+        self.recent_successes = []  # Last N successful requests
+        self.recent_success_window = 10  # Track last 10 requests
+
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -69,75 +79,84 @@ class SubredditScanner:
         logging.info(f"\n{signal_name} received, shutting down gracefully...")
         self.shutdown_requested = True
 
+    def _track_success(self):
+        """Track a successful request to help distinguish real 403s from throttling."""
+        self.recent_successes.append(True)
+        if len(self.recent_successes) > self.recent_success_window:
+            self.recent_successes.pop(0)
+
+    def _should_trust_403(self) -> bool:
+        """
+        Determine if a 403 is likely a real delete/ban vs. throttling.
+
+        If we've had 5+ successes in the last 10 requests, we're not being throttled,
+        so 403s are likely real bans/deletes.
+        """
+        return len(self.recent_successes) >= 5
+
+    def _check_error_thresholds(self) -> bool:
+        """Check if error thresholds exceeded. Returns True if should terminate."""
+        max_403 = getattr(self.config, 'max_consecutive_403', 10)
+        max_429 = getattr(self.config, 'max_total_429', 3)
+
+        # Check 429s from reddit client
+        self.total_429s = self.reddit_client.rate_limit_hits
+
+        if self.consecutive_403s >= max_403:
+            logging.error(f"🛑 {self.consecutive_403s} consecutive 403s - likely blocked. Terminating.")
+            return True
+
+        if self.total_429s >= max_429:
+            logging.error(f"🛑 {self.total_429s} rate limit hits (429s) - backing off. Terminating.")
+            return True
+
+        return False
+
+    def _interleave_with_random(self, ordered_list: List[str]) -> List[str]:
+        """
+        Interleave ordered list with random picks for organic access pattern.
+
+        Pattern: popular, random, popular, random...
+        This makes update scans look less like systematic scraping.
+        """
+        if len(ordered_list) <= 2:
+            return ordered_list
+
+        result = []
+        remaining = set(ordered_list)
+        ordered_idx = 0
+
+        while remaining:
+            # Pick next from ordered list (popular first)
+            if ordered_idx < len(ordered_list) and ordered_list[ordered_idx] in remaining:
+                sub = ordered_list[ordered_idx]
+                result.append(sub)
+                remaining.discard(sub)
+                ordered_idx += 1
+            else:
+                # Skip already-used items in ordered list
+                while ordered_idx < len(ordered_list) and ordered_list[ordered_idx] not in remaining:
+                    ordered_idx += 1
+                if ordered_idx < len(ordered_list):
+                    sub = ordered_list[ordered_idx]
+                    result.append(sub)
+                    remaining.discard(sub)
+                    ordered_idx += 1
+
+            if not remaining:
+                break
+
+            # Pick random from remaining
+            random_pick = random.choice(list(remaining))
+            result.append(random_pick)
+            remaining.discard(random_pick)
+
+        return result
+
     async def initialize(self):
         """Initialize scanner components."""
         await self.reddit_client.initialize()
         logging.debug("Scanner initialized")
-
-    async def load_subreddit_list(self, file_path: str) -> int:
-        """
-        Load subreddit list from file and add to database.
-
-        Args:
-            file_path: Path to file containing subreddit names (one per line)
-
-        Returns:
-            Number of subreddits added
-        """
-        path = Path(file_path)
-        if not path.exists():
-            raise FileNotFoundError(f"Subreddit list file not found: {file_path}")
-
-        logging.info(f"Loading subreddit list from {file_path}...")
-
-        subreddits = []
-        with open(path, 'r') as f:
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
-                # Skip empty lines and comments
-                if line and not line.startswith('#'):
-                    # Remove r/ prefix if present
-                    if line.startswith('r/'):
-                        line = line[2:]
-                    subreddits.append(line.lower())
-
-        if not subreddits:
-            raise ValueError(f"No subreddits found in {file_path}")
-
-        logging.info(f"Found {len(subreddits)} subreddits in file")
-        logging.info("Adding subreddits to database...")
-
-        added = self.db.add_subreddits_bulk(subreddits)
-
-        # Get current database stats after import
-        stats = self.db.get_processing_stats()
-
-        logging.info(
-            f"\n{'='*60}\n"
-            f"Subreddit List Import Complete:\n"
-            f"  From file: {len(subreddits)} subreddits\n"
-            f"  New additions: {added}\n"
-            f"  Already existed: {len(subreddits) - added}\n"
-            f"  Total in database: {stats.get('total_subreddits', 0)}\n"
-            f"  Pending processing: {stats.get('pending', 0)}\n"
-            f"  Previously completed: {stats.get('completed', 0)}\n"
-            f"{'='*60}"
-        )
-
-        # Rename imported file to prevent re-import
-        import datetime
-        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-        backup_path = path.parent / f"{path.stem}.imported_{timestamp}{path.suffix}"
-
-        try:
-            path.rename(backup_path)
-            logging.info(f"\n✓ Input file renamed to: {backup_path.name}")
-            logging.info("  (This prevents accidental re-import)")
-        except Exception as e:
-            logging.warning(f"Could not rename input file: {e}")
-            logging.warning("  You may want to manually rename/delete it to avoid re-import")
-
-        return added
 
     async def process_subreddit(self, subreddit: str) -> bool:
         """
@@ -164,6 +183,9 @@ class SubredditScanner:
                 return True
 
             if status == 'active' and metadata:
+                # Success - reset consecutive 403 counter
+                self.consecutive_403s = 0
+
                 # Update database with metadata
                 self.db.update_subreddit_metadata(subreddit, metadata)
 
@@ -189,6 +211,12 @@ class SubredditScanner:
                 return True
 
             else:
+                # Track 403s (returned as 'deleted' status)
+                if status == 'deleted':
+                    self.consecutive_403s += 1
+                else:
+                    self.consecutive_403s = 0  # Reset on other statuses
+
                 # Update status for non-active subreddits
                 self.db.update_subreddit_status(subreddit, status)
 
@@ -223,23 +251,21 @@ class SubredditScanner:
         if sum(fixed.values()) > 0:
             logging.info(f"Fixed {sum(fixed.values())} inconsistent database states")
 
-        # Determine which subreddits to process based on mode
-        if self.mode == 'update':
-            # UPDATE mode: Refresh existing subreddits
-            subreddits_to_process = self.db.get_subreddits_for_update(limit=self.limit)
-            mode_desc = "subreddits to UPDATE"
-        else:
-            # METADATA mode: Process NEW subreddits
-            subreddits_to_process = self.db.get_pending_subreddits(limit=self.limit)
-            mode_desc = "subreddits need metadata"
+        # Get subreddits that need updating (stale or never updated)
+        subreddits_to_process = self.db.get_subreddits_for_update(
+            limit=self.limit,
+            nsfw_only=self.nsfw_only
+        )
+        mode_desc = "subreddits to UPDATE" + (" (NSFW only)" if self.nsfw_only else "")
+
+        # Interleaved order: alternate popular + random for organic pattern
+        subreddits_to_process = self._interleave_with_random(subreddits_to_process)
+        logging.debug("Interleaved update order: alternating popular + random")
 
         total_to_process = len(subreddits_to_process)
 
         print("=" * 80)
-        if self.mode == 'update':
-            print(f"🔄 Starting Scanner - Metadata UPDATE (Refresh)")
-        else:
-            print(f"🚀 Starting Scanner - Metadata Collection (NEW)")
+        print(f"🔄 Starting Scanner - Metadata UPDATE (Refresh)")
         print(f"   {total_to_process:,} {mode_desc}")
         if self.limit:
             print(f"   Limited to: {self.limit:,} subreddits")
@@ -255,8 +281,18 @@ class SubredditScanner:
                     if self.shutdown_requested:
                         break
 
+                    # Check error thresholds before processing
+                    if self._check_error_thresholds():
+                        self.shutdown_requested = True
+                        break
+
                     # Process subreddit
                     await self.process_subreddit(subreddit)
+
+                    # Check error thresholds after processing
+                    if self._check_error_thresholds():
+                        self.shutdown_requested = True
+                        break
 
                     # Show live progress after each subreddit
                     self._show_progress(idx + 1, total_to_process)
@@ -269,13 +305,19 @@ class SubredditScanner:
                     if not self.shutdown_requested and self.config.subreddit_cooldown > 0:
                         await asyncio.sleep(self.config.subreddit_cooldown)
 
+                    # Batch pause every N subreddits (human-like break)
+                    interval = getattr(self.config, 'batch_pause_interval', 75)
+                    if not self.shutdown_requested and (idx + 1) % interval == 0:
+                        pause_min = getattr(self.config, 'batch_pause_min', 30.0)
+                        pause_max = getattr(self.config, 'batch_pause_max', 60.0)
+                        pause = random.uniform(pause_min, pause_max)
+                        logging.info(f"☕ Batch pause ({idx + 1} processed): {pause:.0f}s...")
+                        await asyncio.sleep(pause)
+
                 # Final report
                 print()
                 if idx + 1 >= total_to_process and not self.shutdown_requested:
-                    if self.mode == 'update':
-                        logging.info("✅ All subreddit metadata updated!")
-                    else:
-                        logging.info("✅ All subreddit metadata collected!")
+                    logging.info("✅ All subreddit metadata updated!")
 
             self._report_final()
 
@@ -422,6 +464,11 @@ class SubredditScanner:
                 if row.get('subreddit'):
                     csv_rows.append(row)
 
+        # Randomize order to avoid detection patterns
+        if getattr(self.config, 'shuffle_order', True):
+            random.shuffle(csv_rows)
+            logging.debug("Randomized CSV processing order")
+
         initial_count = len(csv_rows)
         limit = self.limit if self.limit else len(csv_rows)
 
@@ -444,12 +491,20 @@ class SubredditScanner:
                     rows_to_keep.extend(csv_rows[idx:])  # Keep unprocessed rows
                     break
 
+                # Check error thresholds
+                if self._check_error_thresholds():
+                    logging.info("Error threshold exceeded, saving progress...")
+                    self.shutdown_requested = True
+                    rows_to_keep.extend(csv_rows[idx:])  # Keep unprocessed rows
+                    break
+
                 if processed >= limit:
                     # Reached limit, keep remaining rows
                     rows_to_keep.extend(csv_rows[idx:])
                     break
 
                 subreddit = row['subreddit'].strip().lower()
+                retry_count = int(row.get('retry_count', 0))  # Track retry attempts
 
                 # Check if already in database
                 existing = self.db.conn.execute(
@@ -478,6 +533,21 @@ class SubredditScanner:
                             continue
 
                         if status == 'active' and metadata:
+                            # Success - reset consecutive 403 counter and track success
+                            self.consecutive_403s = 0
+                            self._track_success()
+
+                            subscribers = metadata.get('subscribers', 0) or 0
+
+                            # Filter out tiny subreddits (< 100 subscribers) from current API data
+                            if subscribers < 100:
+                                logging.info(f"⏭️  r/{subreddit:<25} (< 100 subs, skipped)")
+                                # Remove from DB (was added as pending)
+                                self.db.conn.execute("DELETE FROM subreddits WHERE name = ?", (subreddit,))
+                                self.db.conn.commit()
+                                # Don't keep this row - filtered out
+                                continue
+
                             # Save metadata
                             self.db.update_subreddit_metadata(subreddit, metadata)
                             self.db.update_subreddit(
@@ -485,14 +555,49 @@ class SubredditScanner:
                                 metadata_collected=True
                             )
 
-                            subscribers = metadata.get('subscribers', 0) or 0
                             nsfw_flag = '🔞' if metadata.get('over18', False) else '  '
                             logging.info(
                                 f"✓ r/{subreddit:<25} {nsfw_flag} {subscribers:>12,} subs (scanned & saved)"
                             )
                             scanned_and_saved += 1
+                        elif status == 'deleted':
+                            # 403 response - determine if it's throttling or real delete
+                            self.consecutive_403s += 1
+
+                            # If we have recent successes, trust that 403 means actually deleted
+                            if self._should_trust_403():
+                                # Recent successes indicate we're not throttled - this is a real delete
+                                self.db.update_subreddit_status(subreddit, status)
+                                self.db.update_subreddit(
+                                    subreddit, status, f"Status: {status}",
+                                    metadata_collected=True
+                                )
+                                logging.warning(f"⚠️  r/{subreddit:<25} - deleted/banned (removed from CSV)")
+                                scanned_and_saved += 1
+                            elif retry_count < 3:
+                                # Not enough recent successes, might be throttling - retry
+                                row['retry_count'] = retry_count + 1
+                                rows_to_keep.append(row)
+                                logging.warning(
+                                    f"⚠️  r/{subreddit:<25} - 403 forbidden (retry {retry_count + 1}/3, kept in CSV)"
+                                )
+                                # Remove from DB (was added as pending)
+                                self.db.conn.execute("DELETE FROM subreddits WHERE name = ?", (subreddit,))
+                                self.db.conn.commit()
+                            else:
+                                # Tried 3 times, actually deleted/banned
+                                self.db.update_subreddit_status(subreddit, status)
+                                self.db.update_subreddit(
+                                    subreddit, status, f"Status: {status} (after 3 retries)",
+                                    metadata_collected=True
+                                )
+                                logging.warning(f"⚠️  r/{subreddit:<25} - deleted/banned after 3 attempts (removed from CSV)")
+                                scanned_and_saved += 1
                         else:
-                            # Non-active (deleted/banned/private)
+                            # Other non-active states (private, quarantined) - reset 403 counter and track success
+                            self.consecutive_403s = 0
+                            self._track_success()  # These are valid API responses
+
                             self.db.update_subreddit_status(subreddit, status)
                             self.db.update_subreddit(
                                 subreddit, status, f"Status: {status}",
@@ -501,7 +606,7 @@ class SubredditScanner:
                             logging.warning(f"⚠️  r/{subreddit:<25} - {status} (saved status)")
                             scanned_and_saved += 1
 
-                        # Successfully processed - DON'T keep this row
+                        # Successfully processed - DON'T keep this row (unless it was a 403 retry)
 
                     except Exception as e:
                         logging.error(f"❌ r/{subreddit} - Error: {e}")
@@ -524,6 +629,15 @@ class SubredditScanner:
                 if not self.shutdown_requested and self.config.subreddit_cooldown > 0:
                     await asyncio.sleep(self.config.subreddit_cooldown)
 
+                # Batch pause every N subreddits (human-like break)
+                interval = getattr(self.config, 'batch_pause_interval', 75)
+                if not self.shutdown_requested and processed % interval == 0:
+                    pause_min = getattr(self.config, 'batch_pause_min', 30.0)
+                    pause_max = getattr(self.config, 'batch_pause_max', 60.0)
+                    pause = random.uniform(pause_min, pause_max)
+                    logging.info(f"☕ Batch pause ({processed} processed): {pause:.0f}s...")
+                    await asyncio.sleep(pause)
+
             # Write updated CSV (only rows we're keeping)
             print()
             print("=" * 80)
@@ -531,12 +645,16 @@ class SubredditScanner:
 
             with open(csv_path, 'w', newline='') as f:
                 if rows_to_keep:
-                    writer = csv.DictWriter(f, fieldnames=['subreddit', 'subscribers'])
+                    writer = csv.DictWriter(f, fieldnames=['subreddit', 'subscribers', 'retry_count'], extrasaction='ignore')
                     writer.writeheader()
-                    writer.writerows(rows_to_keep)
+                    for row in rows_to_keep:
+                        # Ensure retry_count exists
+                        if 'retry_count' not in row:
+                            row['retry_count'] = 0
+                        writer.writerow(row)
                 else:
                     # Empty CSV - write just header
-                    writer = csv.DictWriter(f, fieldnames=['subreddit', 'subscribers'])
+                    writer = csv.DictWriter(f, fieldnames=['subreddit', 'subscribers', 'retry_count'])
                     writer.writeheader()
 
             final_count = len(rows_to_keep)

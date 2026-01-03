@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     const params: any[] = [];
 
     if (format === 'minimal') {
-      // Minimal format for Redditarr (smaller payload)
+      // Minimal format (smaller payload)
       sql = `
         SELECT name, title, subscribers, over_18, category, language
         FROM subreddits

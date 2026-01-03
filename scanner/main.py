@@ -117,33 +117,20 @@ Environment variables:
     )
 
     mode_group.add_argument(
-        '--ingest',
-        action='store_true',
-        help='[DEPRECATED] Ingest NEW subreddits from CSV (use --scan-csv instead)'
-    )
-
-    mode_group.add_argument(
-        '--metadata',
-        action='store_true',
-        help='Collect metadata for NEW subreddits already in DB (pending only)'
-    )
-
-    mode_group.add_argument(
         '--update',
         action='store_true',
-        help='UPDATE metadata for existing subreddits (refresh data)'
-    )
-
-    mode_group.add_argument(
-        '--threads',
-        action='store_true',
-        help='Collect thread IDs for subreddits with metadata'
+        help='UPDATE metadata for existing subreddits (refresh stale data)'
     )
 
     mode_group.add_argument(
         '--vacuum',
         action='store_true',
         help='Compact database and reclaim space (run after cleanup or migration)'
+    )
+    mode_group.add_argument(
+        '--stats',
+        action='store_true',
+        help='Show database statistics and subreddits needing update'
     )
 
     parser.add_argument(
@@ -178,6 +165,13 @@ Environment variables:
         '--limit',
         type=int,
         help='Limit number of subreddits to process (for testing or batching)'
+    )
+
+    # Filtering options
+    parser.add_argument(
+        '--nsfw-only',
+        action='store_true',
+        help='Only process NSFW (18+) subreddits'
     )
 
     # Rate limiting options
@@ -234,16 +228,12 @@ async def main():
         # Determine mode
         if args.scan_csv:
             mode = 'scan_csv'
-        elif args.ingest:
-            mode = 'ingest'
-        elif args.metadata:
-            mode = 'metadata'
         elif args.update:
             mode = 'update'
-        elif args.threads:
-            mode = 'threads'
         elif args.vacuum:
             mode = 'vacuum'
+        elif args.stats:
+            mode = 'stats'
         else:
             mode = None
 
@@ -275,7 +265,37 @@ async def main():
         scanner = SubredditScanner(config)
 
         # Handle different modes
-        if args.vacuum:
+        if args.stats:
+            # Stats mode: Show database statistics
+            logging.info("="*60)
+            logging.info("DATABASE STATISTICS")
+            logging.info("="*60)
+
+            # Get general stats
+            stats = scanner.db.get_processing_stats()
+
+            # Get update status
+            update_stats = scanner.db.count_stale_subreddits(stale_days=30)
+
+            logging.info("")
+            logging.info("General:")
+            logging.info(f"  Total subreddits:     {stats.get('total_subreddits', 0):>10,}")
+            logging.info(f"  Active:               {stats.get('active', 0):>10,}")
+            logging.info(f"  Private:              {stats.get('private', 0):>10,}")
+            logging.info(f"  Banned/Deleted:       {stats.get('deleted', 0):>10,}")
+            logging.info(f"  With metadata:        {stats.get('metadata_collected', 0):>10,}")
+            logging.info("")
+            logging.info("Update Status (30-day threshold):")
+            logging.info(f"  Never updated:        {update_stats['never_updated']:>10,}")
+            logging.info(f"  Stale (>30 days):     {update_stats['stale']:>10,}")
+            logging.info(f"  Total needing update: {update_stats['total_needing_update']:>10,}")
+            logging.info("="*60)
+
+            # Exit after stats
+            await scanner.shutdown()
+            return 0
+
+        elif args.vacuum:
             # Vacuum mode: Compact database
             logging.info("="*60)
             logging.info("VACUUM MODE: Compacting Database")
@@ -292,39 +312,6 @@ async def main():
             logging.info("="*60)
 
             # Exit after vacuum
-            await scanner.shutdown()
-            return 0
-
-        elif args.ingest:
-            # Ingest mode: Load CSV and add NEW subreddits only
-            logging.info("="*60)
-            logging.info("INGEST MODE: Adding NEW Subreddits from CSV")
-            if args.limit:
-                logging.info(f"LIMIT: {args.limit} subreddits")
-            logging.info("="*60)
-
-            result = scanner.db.ingest_from_csv(args.csv, limit=args.limit)
-
-            # Show ingest results
-            stats = scanner.db.get_processing_stats()
-            logging.info("")
-            logging.info("="*60)
-            logging.info("Ingest Results:")
-            logging.info(f"  Total in CSV: {result['total']}")
-            logging.info(f"  New subreddits added: {result['added']}")
-            logging.info(f"  Already in DB (skipped): {result['skipped']}")
-            logging.info("")
-            logging.info(f"Database now contains:")
-            logging.info(f"  Total subreddits: {stats.get('total_subreddits', 0)}")
-            logging.info(f"  Need metadata: {stats.get('metadata_pending', 0)}")
-            logging.info(f"  Need threads: {stats.get('threads_pending', 0)}")
-            logging.info("")
-            logging.info("Next steps:")
-            logging.info("  1. Collect metadata:   python main.py --metadata")
-            logging.info("  2. Collect thread IDs: python main.py --threads")
-            logging.info("="*60)
-
-            # Exit after ingest
             await scanner.shutdown()
             return 0
 
@@ -352,33 +339,28 @@ async def main():
             logging.info("CSV scanning complete")
             return 0
 
-        elif args.metadata or args.update or args.threads:
-            # Processing mode
+        elif args.update:
+            # Update mode: Refresh existing subreddits
             await scanner.initialize()
 
-            # Pass limit and mode to scanner
+            # Pass limit, mode, and filters to scanner
             scanner.limit = args.limit
             scanner.mode = mode
-
-            if args.metadata:
-                mode_name = "Metadata Collection (NEW subreddits)"
-            elif args.update:
-                mode_name = "Metadata Update (REFRESH existing)"
-            else:
-                mode_name = "Thread ID Collection"
+            scanner.nsfw_only = args.nsfw_only
 
             logging.info("="*60)
-            logging.info(f"PROCESSING MODE: {mode_name}")
+            logging.info(f"UPDATE MODE: Refresh existing subreddit metadata")
             if args.limit:
                 logging.info(f"LIMIT: {args.limit} subreddits")
-            logging.info("="*60)
+            if args.nsfw_only:
+                logging.info(f"FILTER: NSFW subreddits only")
             logging.info("="*60)
 
             # Check if we have subreddits to process
             stats = scanner.db.get_processing_stats()
             if stats.get('total_subreddits', 0) == 0:
                 logging.error("No subreddits in database!")
-                logging.error("First ingest subreddits with: python main.py --ingest")
+                logging.error("First scan subreddits with: python main.py --scan-csv --csv <file>")
                 return 1
 
             # Run scanner

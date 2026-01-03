@@ -456,7 +456,7 @@ export default function Home() {
         {/* Footer */}
         <div className="text-center mt-12 sm:mt-16 text-gray-400 text-xs sm:text-sm space-y-2 sm:space-y-3 pb-6">
           <p>
-            Built for Redditarr and the community
+            Built for the selfhosted community
           </p>
           <p className="hidden sm:block">
             Data sourced from Reddit and updated regularly

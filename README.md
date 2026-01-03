@@ -107,9 +107,6 @@ The Next.js app provides internal API routes:
 
 ## Use Cases
 
-### For Redditarr Users
-SubDir will provide instant subreddit discovery for [Redditarr](https://github.com/justriverjames/redditarr) archiving workflows.
-
 ### For Researchers
 - Bulk metadata exports for analysis
 - Explore subreddit ecosystem
@@ -204,7 +201,6 @@ See [ROADMAP.md](ROADMAP.md) for full development plans.
 - Production-ready web interface
 - Categorized subreddit directory
 - Public deployment at subdir.justriverjames.com
-- Redditarr integration
 
 ---
 
@@ -243,6 +239,6 @@ SubDir is not affiliated with, endorsed by, or connected to Reddit, Inc. All dat
 
 ## Credits
 
-**Built for [Redditarr](https://github.com/justriverjames/redditarr)** and the selfhosted community.
+**Built for the datahoarder and selfhosted communities.**
 
 **Live Site:** https://subdir.justriverjames.com

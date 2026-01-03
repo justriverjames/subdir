@@ -7,6 +7,7 @@ Simplified Reddit client focused on subreddit metadata and thread ID collection.
 import httpx
 import logging
 import asyncio
+import random
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -51,6 +52,12 @@ class RedditAPIClient:
         self.total_requests = 0
         self.failed_requests = 0
         self.rate_limit_hits = 0
+        self.diversity_requests = 0  # Count of non-metadata requests
+
+        # Anti-detection settings
+        self.min_delay = getattr(config, 'min_request_delay', 2.0)
+        self.max_delay = getattr(config, 'max_request_delay', 8.0)
+        self.request_diversity = getattr(config, 'request_diversity', True)
 
     async def initialize(self):
         """Initialize the client and authenticate."""
@@ -100,6 +107,36 @@ class RedditAPIClient:
             logging.info("Access token expired, refreshing...")
             await self._authenticate()
 
+    async def _random_delay(self):
+        """Add random human-like delay between requests."""
+        delay = random.uniform(self.min_delay, self.max_delay)
+        logging.debug(f"Adding human-like delay: {delay:.2f}s")
+        await asyncio.sleep(delay)
+
+    async def _make_diversity_request(self):
+        """Make a random non-metadata request to appear more human-like."""
+        if not self.request_diversity:
+            return
+
+        # 20% chance to make a diversity request
+        if random.random() > 0.2:
+            return
+
+        diversity_endpoints = [
+            'https://oauth.reddit.com/hot',
+            'https://oauth.reddit.com/new',
+            'https://oauth.reddit.com/r/all/hot?limit=5',
+            'https://oauth.reddit.com/r/popular/hot?limit=5',
+        ]
+
+        endpoint = random.choice(diversity_endpoints)
+        try:
+            await self._make_request('GET', endpoint, max_retries=1)
+            self.diversity_requests += 1
+            logging.debug(f"Made diversity request to {endpoint}")
+        except Exception:
+            pass  # Ignore failures for diversity requests
+
     async def _make_request(
         self,
         method: str,
@@ -127,6 +164,9 @@ class RedditAPIClient:
             try:
                 # Wait for rate limiter
                 await self.rate_limiter.acquire()
+
+                # Add random human-like delay
+                await self._random_delay()
 
                 # Make request
                 headers = {
@@ -206,6 +246,9 @@ class RedditAPIClient:
             Tuple of (metadata dict, status string)
             Status can be: 'active', 'private', 'banned', 'quarantined', 'deleted', 'error'
         """
+        # Occasionally make diversity requests to look more organic
+        await self._make_diversity_request()
+
         url = f'https://oauth.reddit.com/r/{subreddit}/about'
 
         try:
@@ -305,6 +348,7 @@ class RedditAPIClient:
             'total_requests': self.total_requests,
             'failed_requests': self.failed_requests,
             'rate_limit_hits': self.rate_limit_hits,
+            'diversity_requests': self.diversity_requests,
             'success_rate': (
                 (self.total_requests - self.failed_requests) / self.total_requests
                 if self.total_requests > 0 else 0

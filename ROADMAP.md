@@ -94,50 +94,7 @@ GET  /api/search?q=...&category=...     # Category filter
 
 ---
 
-## v1.2: Redditarr Integration (Q4 2025)
-
-### Priority: HIGH
-
-#### Integration with Redditarr
-Enable Redditarr to use SubDir for faster subreddit discovery:
-
-**Benefits:**
-- Instant search (vs slow Reddit API queries)
-- Pre-populated thread IDs (skip 2-3 min pagination)
-- Offline subreddit browsing
-
-#### Implementation
-
-**Redditarr Side:**
-1. Create `app/subdir_client.py`
-   - Bulk metadata download (~5MB, weekly refresh)
-   - Local SQLite cache
-   - Instant search without API calls
-
-2. Update `/api/subreddits/suggest` endpoint
-   - Merge SubDir results + live Reddit API
-   - Deduplicate by name
-
-3. Thread ID pre-population
-   - When adding subreddit, fetch thread IDs from SubDir
-   - Pre-populate posts table with thread IDs
-   - Metadata worker fills in details later
-
-4. Settings UI
-   - Enable/disable SubDir integration
-   - Cache refresh controls
-   - Link to SubDir web UI
-
-**SubDir Side:**
-- Ensure stable API
-- Document integration pattern
-- Provide example code
-
-**Estimated Time:** 3-4 days
-
----
-
-## v1.3: Data Enrichment (Q1 2026)
+## v1.2: Data Enrichment (Q1 2026)
 
 ### Priority: MEDIUM
 
@@ -164,7 +121,7 @@ Enable Redditarr to use SubDir for faster subreddit discovery:
 
 ---
 
-## v1.4: Performance & Scalability (Q1 2026)
+## v1.3: Performance & Scalability (Q1 2026)
 
 ### Priority: MEDIUM
 
@@ -196,7 +153,7 @@ Enable Redditarr to use SubDir for faster subreddit discovery:
 
 ---
 
-## v1.5: User Features (Q2 2026)
+## v1.4: User Features (Q2 2026)
 
 ### Priority: LOW-MEDIUM
 
@@ -349,17 +306,15 @@ Enable Redditarr to use SubDir for faster subreddit discovery:
 ### v1.0 Goals (October 2025)
 - [x] Launch public instance
 - [ ] 100+ unique visitors/week
-- [ ] 10+ Redditarr integrations
 - [ ] Zero downtime
 
 ### v1.1 Goals (Q4 2025)
 - [ ] Complete AI categorization
 - [ ] 500+ unique visitors/week
-- [ ] 50+ Redditarr integrations
 - [ ] Featured on r/selfhosted
 
-### v1.2 Goals (Q4 2025)
-- [ ] Redditarr integration shipped
+### v1.2 Goals (Q1 2026)
+- [ ] Enhanced metadata collection
 - [ ] 1000+ unique visitors/week
 - [ ] Community contributions (PRs, issues)
 - [ ] 99.9% uptime
