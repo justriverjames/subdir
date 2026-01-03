@@ -93,7 +93,7 @@ export default function Home() {
     setShowSuggestions(false);
 
     try {
-      const res = await fetch(`/api/browse?mode=${filter}&limit=1000`);
+      const res = await fetch(`/api/browse?mode=${filter}&limit=3000`);
       const data = await res.json();
       setResults(data.subreddits || []);
     } catch (error) {
@@ -314,15 +314,15 @@ export default function Home() {
                     <div className="flex gap-2 items-center flex-wrap">
                       <span className="text-xs sm:text-sm text-gray-400">Download:</span>
                       <a
-                        href={`/api/export/json?format=minimal&mode=${browseFilter}&limit=1000`}
-                        download={`subreddits-top1000-${browseFilter}.json`}
+                        href={`/api/export/json?format=minimal&mode=${browseFilter}&limit=3000`}
+                        download={`subreddits-top3000-${browseFilter}.json`}
                         className="px-2 sm:px-3 py-1 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 rounded backdrop-blur-sm transition-colors text-xs sm:text-sm border border-purple-500/30"
                       >
                         📦 JSON
                       </a>
                       <a
-                        href={`/api/export/csv?mode=${browseFilter}&limit=1000`}
-                        download={`subreddits-top1000-${browseFilter}.csv`}
+                        href={`/api/export/csv?mode=${browseFilter}&limit=3000`}
+                        download={`subreddits-top3000-${browseFilter}.csv`}
                         className="px-2 sm:px-3 py-1 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 rounded backdrop-blur-sm transition-colors text-xs sm:text-sm border border-purple-500/30"
                       >
                         📊 CSV
@@ -330,7 +330,7 @@ export default function Home() {
                     </div>
                   )}
                 </div>
-                {results.map((sub) => (
+                {results.map((sub, index) => (
                   <a
                     key={sub.name}
                     href={`https://reddit.com/r/${sub.name}`}
@@ -339,6 +339,13 @@ export default function Home() {
                     className="block p-4 sm:p-6 bg-white/10 hover:bg-white/15 rounded-lg backdrop-blur-sm border border-white/10 transition-all hover:border-purple-500/50"
                   >
                     <div className="flex items-start gap-3 sm:gap-4">
+                      {/* Ranking Number */}
+                      <div className="flex-shrink-0 w-8 sm:w-10 text-right">
+                        <span className="text-lg sm:text-xl font-bold text-purple-400/60">
+                          #{index + 1}
+                        </span>
+                      </div>
+
                       {/* Icon */}
                       <div className="relative w-12 h-12 sm:w-16 sm:h-16 flex-shrink-0">
                         {sub.icon_url && (
