@@ -71,24 +71,30 @@ def create_parser() -> ArgumentParser:
         formatter_class=RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # DEDUPE CSV: Remove subreddits already in DB (fast, no API calls)
+  python main.py --dedupe-csv --csv ../data/all_subreddits_2025.csv
+
   # SCAN subreddits from CSV (atomic: fetch + save + remove from CSV)
   python main.py --scan-csv --csv ../data/subreddits_to_scan.csv --limit 100
 
   # UPDATE metadata for existing subreddits (refresh data)
   python main.py --update --limit 100
 
-  # Collect metadata for subreddits already in DB (legacy mode)
-  python main.py --metadata --limit 100
-
   # RECOMMENDED WORKFLOW:
-  # 1. Scan new subreddits (processes & removes from CSV as you go)
-  python main.py --scan-csv --csv ../data/subreddits_to_scan.csv --limit 1000
+  # 1. Fast dedupe CSV first (removes existing subs from CSV instantly)
+  python main.py --dedupe-csv --csv ../data/all_subreddits_2025.csv
 
-  # 2. Update existing subreddits periodically (keeps data fresh)
+  # 2. Scan remaining new subreddits (processes & removes from CSV as you go)
+  python main.py --scan-csv --csv ../data/all_subreddits_2025.csv --limit 1000
+
+  # 3. Update existing subreddits periodically (keeps data fresh)
   python main.py --update --limit 1000
 
   # Maintenance: Compact database and reclaim space
   python main.py --vacuum
+
+  # Show database statistics
+  python main.py --stats
 
 Alternative (from parent directory):
   python -m subreddit_scanner --ingest
@@ -131,6 +137,12 @@ Environment variables:
         '--stats',
         action='store_true',
         help='Show database statistics and subreddits needing update'
+    )
+
+    mode_group.add_argument(
+        '--dedupe-csv',
+        action='store_true',
+        help='Remove subreddits already in database from CSV (no API calls, fast)'
     )
 
     parser.add_argument(
@@ -234,6 +246,8 @@ async def main():
             mode = 'vacuum'
         elif args.stats:
             mode = 'stats'
+        elif args.dedupe_csv:
+            mode = 'dedupe_csv'
         else:
             mode = None
 
@@ -312,6 +326,23 @@ async def main():
             logging.info("="*60)
 
             # Exit after vacuum
+            await scanner.shutdown()
+            return 0
+
+        elif args.dedupe_csv:
+            # Dedupe mode: Remove duplicates from CSV (no API calls)
+            logging.info("="*60)
+            logging.info("DEDUPE-CSV MODE: Remove duplicates from CSV")
+            logging.info(f"CSV: {args.csv}")
+            logging.info("="*60)
+
+            # Pass CSV path to scanner
+            scanner.csv_path = args.csv
+
+            # Run dedupe (no initialization needed - just DB queries)
+            scanner.dedupe_csv()
+
+            # Exit after dedupe
             await scanner.shutdown()
             return 0
 

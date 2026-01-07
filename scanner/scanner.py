@@ -683,6 +683,116 @@ class SubredditScanner:
         finally:
             self.running = False
 
+    def dedupe_csv(self):
+        """
+        Fast CSV deduplication: Remove internal duplicates AND subreddits already in DB.
+
+        No API calls, no rate limiting - just pure DB lookups.
+        Perfect for pre-cleaning CSV files before scanning.
+        """
+        import csv
+        from pathlib import Path
+
+        csv_path = Path(self.csv_path)
+        if not csv_path.exists():
+            logging.error(f"CSV file not found: {self.csv_path}")
+            return
+
+        print("=" * 80)
+        print(f"📄 Loading CSV: {csv_path}")
+        print("=" * 80)
+
+        # Load entire CSV into memory
+        csv_rows = []
+        with open(csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get('subreddit'):
+                    csv_rows.append(row)
+
+        initial_count = len(csv_rows)
+        print(f"CSV contains: {initial_count:,} subreddits")
+        print("=" * 80)
+        print()
+
+        # Step 1: Remove internal duplicates from CSV
+        logging.info("🔍 Step 1: Removing internal CSV duplicates...")
+        seen_subreddits = set()
+        unique_rows = []
+        internal_dupes = 0
+
+        for row in csv_rows:
+            subreddit = row['subreddit'].strip().lower()
+            if subreddit not in seen_subreddits:
+                seen_subreddits.add(subreddit)
+                unique_rows.append(row)
+            else:
+                internal_dupes += 1
+
+        print(f"   Internal duplicates found: {internal_dupes:,}")
+        print(f"   Unique subreddits in CSV:  {len(unique_rows):,}")
+        print()
+
+        # Step 2: Check against database
+        logging.info("🔍 Step 2: Checking database for duplicates...")
+        print()
+
+        db_duplicates = 0
+        rows_to_keep = []
+
+        for idx, row in enumerate(unique_rows):
+            subreddit = row['subreddit'].strip().lower()
+
+            # Quick DB lookup - no API call
+            existing = self.db.conn.execute(
+                "SELECT name FROM subreddits WHERE name = ?",
+                (subreddit,)
+            ).fetchone()
+
+            if existing:
+                db_duplicates += 1
+                if db_duplicates % 100 == 0:
+                    print(f"   Progress: {idx + 1:,}/{len(unique_rows):,} checked | DB duplicates: {db_duplicates:,}")
+            else:
+                # Not in DB - keep this row
+                rows_to_keep.append(row)
+
+        # Write cleaned CSV
+        print()
+        print("=" * 80)
+        print("💾 Writing cleaned CSV...")
+
+        with open(csv_path, 'w', newline='') as f:
+            if rows_to_keep:
+                writer = csv.DictWriter(f, fieldnames=['subreddit', 'subscribers', 'retry_count'], extrasaction='ignore')
+                writer.writeheader()
+                for row in rows_to_keep:
+                    # Ensure retry_count exists
+                    if 'retry_count' not in row:
+                        row['retry_count'] = 0
+                    writer.writerow(row)
+            else:
+                # Empty CSV - write just header
+                writer = csv.DictWriter(f, fieldnames=['subreddit', 'subscribers', 'retry_count'])
+                writer.writeheader()
+
+        final_count = len(rows_to_keep)
+        total_removed = initial_count - final_count
+
+        print(f"✓ CSV cleaned:")
+        print(f"  Started with:           {initial_count:,} subreddits")
+        print(f"  Internal duplicates:    {internal_dupes:,} (removed)")
+        print(f"  Already in DB:          {db_duplicates:,} (removed)")
+        print(f"  Total removed:          {total_removed:,}")
+        print(f"  Remaining in CSV:       {final_count:,}")
+        print("=" * 80)
+        print()
+
+        if final_count == 0:
+            logging.info("✅ All subreddits already in database!")
+        else:
+            logging.info(f"✅ {final_count:,} new subreddits ready to scan")
+
     async def shutdown(self):
         """Shutdown scanner and cleanup resources."""
         logging.debug("Shutting down scanner...")

@@ -44,9 +44,29 @@ export default function Home() {
       });
   }, []);
 
+  // Close autocomplete dropdown on click outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('form')) {
+        setShowSuggestions(false);
+      }
+    };
+
+    if (showSuggestions) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [showSuggestions]);
+
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
+
+    // Dismiss keyboard on mobile
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
 
     setLoading(true);
     setSearched(true);
@@ -144,7 +164,7 @@ export default function Home() {
                 : 'bg-white/10 text-gray-300 hover:bg-white/20'
             }`}
           >
-            Top 1000 (All)
+            Top 3000 (All)
           </button>
           <button
             onClick={() => handleBrowse('sfw')}
@@ -154,7 +174,7 @@ export default function Home() {
                 : 'bg-white/10 text-gray-300 hover:bg-white/20'
             }`}
           >
-            Top 1000 (SFW)
+            Top 3000 (SFW)
           </button>
           <button
             onClick={() => handleBrowse('nsfw')}
@@ -164,7 +184,7 @@ export default function Home() {
                 : 'bg-white/10 text-gray-300 hover:bg-white/20'
             }`}
           >
-            Top 1000 (NSFW)
+            Top 3000 (NSFW)
           </button>
         </div>
 
@@ -185,7 +205,11 @@ export default function Home() {
                 setTimeout(() => setShowSuggestions(false), 200);
               }}
               placeholder="Search subreddits..."
-              className="w-full px-4 sm:px-6 py-3 sm:py-4 pr-20 sm:pr-32 rounded-full bg-white/10 border border-purple-500/50 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent backdrop-blur-sm text-sm sm:text-base"
+              className="w-full px-4 sm:px-6 py-3 sm:py-4 pr-20 sm:pr-32 rounded-full bg-white/10 border border-purple-500/50 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent backdrop-blur-sm text-base"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck="false"
             />
             <button
               type="submit"
@@ -336,15 +360,16 @@ export default function Home() {
                     href={`https://reddit.com/r/${sub.name}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="block p-4 sm:p-6 bg-white/10 hover:bg-white/15 rounded-lg backdrop-blur-sm border border-white/10 transition-all hover:border-purple-500/50"
+                    className="block p-4 sm:p-6 bg-white/10 hover:bg-white/15 rounded-lg backdrop-blur-sm border border-white/10 transition-all hover:border-purple-500/50 relative"
                   >
-                    <div className="flex items-start gap-3 sm:gap-4">
-                      {/* Ranking Number */}
-                      <div className="flex-shrink-0 w-8 sm:w-10 text-right">
-                        <span className="text-lg sm:text-xl font-bold text-purple-400/60">
-                          #{index + 1}
-                        </span>
-                      </div>
+                    {/* Ranking Number */}
+                    <div className="absolute left-2 sm:left-3 top-2 sm:top-3">
+                      <span className="text-xs sm:text-sm font-medium text-purple-400/40">
+                        #{index + 1}
+                      </span>
+                    </div>
+
+                    <div className="flex items-start gap-3 sm:gap-4 pl-8 sm:pl-10">
 
                       {/* Icon */}
                       <div className="relative w-12 h-12 sm:w-16 sm:h-16 flex-shrink-0">
