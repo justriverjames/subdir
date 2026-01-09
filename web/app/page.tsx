@@ -15,7 +15,8 @@ interface Subreddit {
 }
 
 interface Stats {
-  total_subreddits: number;
+  total_subreddits?: number;
+  active_subreddits?: number;
 }
 
 export default function Home() {
