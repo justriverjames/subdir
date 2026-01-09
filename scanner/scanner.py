@@ -183,7 +183,7 @@ class SubredditScanner:
                 return True
 
             if status == 'active' and metadata:
-                # Success - reset consecutive 403 counter
+                # Success - reset consecutive 403 counter and retry count
                 self.consecutive_403s = 0
 
                 # Update database with metadata
@@ -199,6 +199,13 @@ class SubredditScanner:
                     metadata_collected=True
                 )
 
+                # Reset retry count on success
+                self.db.conn.execute(
+                    "UPDATE subreddits SET retry_count = 0 WHERE name = ?",
+                    (subreddit,)
+                )
+                self.db.conn.commit()
+
                 # Update statistics
                 self.subreddits_processed += 1
 
@@ -211,24 +218,66 @@ class SubredditScanner:
                 return True
 
             else:
-                # Track 403s (returned as 'deleted' status)
-                if status == 'deleted':
-                    self.consecutive_403s += 1
-                else:
-                    self.consecutive_403s = 0  # Reset on other statuses
+                # Handle non-active statuses
 
-                # Update status for non-active subreddits
-                self.db.update_subreddit_status(subreddit, status)
-
-                # Log non-active status and return
-                logging.warning(f"⚠️  r/{subreddit} - {status}")
-
-                # Mark as completed with metadata collected
-                self.db.update_subreddit(
-                    subreddit, 'completed', f"Status: {status}",
-                    metadata_collected=True
+                # Get current retry count
+                cursor = self.db.conn.execute(
+                    "SELECT retry_count FROM subreddits WHERE name = ?",
+                    (subreddit,)
                 )
-                return True
+                row = cursor.fetchone()
+                retry_count = row[0] if row and row[0] is not None else 0
+
+                # Handle 404 - subreddit doesn't exist, remove immediately
+                if status == 'notfound':
+                    self.db.conn.execute("DELETE FROM subreddits WHERE name = ?", (subreddit,))
+                    self.db.conn.commit()
+                    logging.warning(f"⚠️  r/{subreddit:<25} - 404 not found (removed from DB)")
+                    self.consecutive_403s = 0
+                    return True
+
+                # Handle 403/deleted - potential ban/delete, use retry logic
+                elif status == 'deleted':
+                    self.consecutive_403s += 1
+                    retry_count += 1
+
+                    if retry_count >= 3:
+                        # Failed 3 times, remove from DB
+                        self.db.conn.execute("DELETE FROM subreddits WHERE name = ?", (subreddit,))
+                        self.db.conn.commit()
+                        logging.warning(f"⚠️  r/{subreddit:<25} - 403 forbidden (3 retries, removed from DB)")
+                        self.consecutive_403s = 0
+                        return True
+                    else:
+                        # Increment retry count, keep in DB
+                        self.db.conn.execute(
+                            "UPDATE subreddits SET retry_count = ? WHERE name = ?",
+                            (retry_count, subreddit)
+                        )
+                        self.db.conn.commit()
+                        logging.warning(f"⚠️  r/{subreddit:<25} - 403 forbidden (retry {retry_count}/3)")
+                        return True
+
+                # Handle other non-active statuses (private, quarantined, etc)
+                else:
+                    self.consecutive_403s = 0
+
+                    # Update status but keep in DB
+                    self.db.update_subreddit_status(subreddit, status)
+                    self.db.update_subreddit(
+                        subreddit, status, f"Status: {status}",
+                        metadata_collected=True
+                    )
+
+                    # Reset retry count on successful response
+                    self.db.conn.execute(
+                        "UPDATE subreddits SET retry_count = 0 WHERE name = ?",
+                        (subreddit,)
+                    )
+                    self.db.conn.commit()
+
+                    logging.warning(f"⚠️  r/{subreddit:<25} - {status}")
+                    return True
 
         except Exception as e:
             logging.error(f"❌ r/{subreddit} - Error: {e}")
@@ -464,10 +513,9 @@ class SubredditScanner:
                 if row.get('subreddit'):
                     csv_rows.append(row)
 
-        # Randomize order to avoid detection patterns
-        if getattr(self.config, 'shuffle_order', True):
-            random.shuffle(csv_rows)
-            logging.debug("Randomized CSV processing order")
+        # Sort by subscribers descending (highest first)
+        csv_rows.sort(key=lambda x: int(x.get('subscribers', 0) or 0), reverse=True)
+        logging.debug("Sorted CSV by subscribers (highest first)")
 
         initial_count = len(csv_rows)
         limit = self.limit if self.limit else len(csv_rows)
@@ -504,7 +552,6 @@ class SubredditScanner:
                     break
 
                 subreddit = row['subreddit'].strip().lower()
-                retry_count = int(row.get('retry_count', 0))  # Track retry attempts
 
                 # Check if already in database
                 existing = self.db.conn.execute(
@@ -561,38 +608,18 @@ class SubredditScanner:
                             )
                             scanned_and_saved += 1
                         elif status == 'deleted':
-                            # 403 response - determine if it's throttling or real delete
-                            self.consecutive_403s += 1
+                            # 403/404 response - subreddit is deleted, banned, or doesn't exist
+                            self.consecutive_403s = 0  # Don't count as error since it's valid response
+                            self._track_success()  # Valid API response
 
-                            # If we have recent successes, trust that 403 means actually deleted
-                            if self._should_trust_403():
-                                # Recent successes indicate we're not throttled - this is a real delete
-                                self.db.update_subreddit_status(subreddit, status)
-                                self.db.update_subreddit(
-                                    subreddit, status, f"Status: {status}",
-                                    metadata_collected=True
-                                )
-                                logging.warning(f"⚠️  r/{subreddit:<25} - deleted/banned (removed from CSV)")
-                                scanned_and_saved += 1
-                            elif retry_count < 3:
-                                # Not enough recent successes, might be throttling - retry
-                                row['retry_count'] = retry_count + 1
-                                rows_to_keep.append(row)
-                                logging.warning(
-                                    f"⚠️  r/{subreddit:<25} - 403 forbidden (retry {retry_count + 1}/3, kept in CSV)"
-                                )
-                                # Remove from DB (was added as pending)
-                                self.db.conn.execute("DELETE FROM subreddits WHERE name = ?", (subreddit,))
-                                self.db.conn.commit()
-                            else:
-                                # Tried 3 times, actually deleted/banned
-                                self.db.update_subreddit_status(subreddit, status)
-                                self.db.update_subreddit(
-                                    subreddit, status, f"Status: {status} (after 3 retries)",
-                                    metadata_collected=True
-                                )
-                                logging.warning(f"⚠️  r/{subreddit:<25} - deleted/banned after 3 attempts (removed from CSV)")
-                                scanned_and_saved += 1
+                            # Save as deleted and remove from CSV
+                            self.db.update_subreddit_status(subreddit, status)
+                            self.db.update_subreddit(
+                                subreddit, status, f"Status: {status}",
+                                metadata_collected=True
+                            )
+                            logging.warning(f"⚠️  r/{subreddit:<25} - deleted/banned (saved & removed from CSV)")
+                            scanned_and_saved += 1
                         else:
                             # Other non-active states (private, quarantined) - reset 403 counter and track success
                             self.consecutive_403s = 0

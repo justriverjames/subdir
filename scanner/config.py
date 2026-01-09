@@ -33,24 +33,24 @@ class Config:
     log_dir: str = "logs"
     log_level: str = "INFO"
 
-    # Rate limiting configuration (conservative for 2025 Reddit API)
+    # Rate limiting configuration (balanced for 2025 Reddit API)
     # Official limit: 100 QPM, but enforced closer to 60 QPM
-    rate_limit_per_minute: int = 50  # Well under 60 to avoid detection
-    rate_limit_per_10s: int = 10  # Burst protection
+    rate_limit_per_minute: int = 60  # Balanced rate (between old 85 and ultra-conservative 50)
+    rate_limit_per_10s: int = 12  # Burst protection
     rate_limit_per_1s: int = 2  # Spike protection
 
     # Processing configuration (adds human-like delays)
-    min_request_delay: float = 2.5  # Minimum delay between requests (seconds)
-    max_request_delay: float = 6.0  # Maximum delay between requests (seconds)
-    subreddit_cooldown: int = 3  # Base cooldown
+    min_request_delay: float = 1.5  # Minimum delay between requests (seconds)
+    max_request_delay: float = 3.0  # Maximum delay between requests (seconds)
+    subreddit_cooldown: int = 2  # Base cooldown
     max_retries: int = 3
 
     # Anti-detection features
     shuffle_order: bool = True  # Randomize subreddit processing order
     request_diversity: bool = True  # Mix in non-metadata requests
-    batch_pause_interval: int = 75  # Pause every N subreddits
-    batch_pause_min: float = 30.0  # Minimum pause duration (seconds)
-    batch_pause_max: float = 60.0  # Maximum pause duration (seconds)
+    batch_pause_interval: int = 100  # Pause every N subreddits (less frequent)
+    batch_pause_min: float = 20.0  # Minimum pause duration (seconds)
+    batch_pause_max: float = 40.0  # Maximum pause duration (seconds)
 
     # Auto-terminate thresholds (stop before getting banned)
     max_consecutive_403: int = 10  # Stop after N consecutive 403s

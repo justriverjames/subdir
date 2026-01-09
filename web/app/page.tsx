@@ -24,23 +24,23 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [showNsfw, setShowNsfw] = useState(false);
-  const [totalSubs, setTotalSubs] = useState<number>(29000); // Fallback
+  const [totalSubs, setTotalSubs] = useState<number | null>(null);
   const [suggestions, setSuggestions] = useState<Subreddit[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [browseMode, setBrowseMode] = useState<'search' | 'browse'>('search');
   const [browseFilter, setBrowseFilter] = useState<'all' | 'sfw' | 'nsfw'>('all');
 
-  // Fetch total subreddit count on mount
+  // Fetch active subreddit count on mount
   useEffect(() => {
     fetch('/api/stats')
       .then(res => res.json())
       .then((data: Stats) => {
-        if (data.total_subreddits) {
-          setTotalSubs(data.total_subreddits);
+        if (data.active_subreddits) {
+          setTotalSubs(data.active_subreddits);
         }
       })
       .catch(() => {
-        // Use fallback on error
+        // Keep null on error to show loading state
       });
   }, []);
 
@@ -147,7 +147,10 @@ export default function Home() {
             Sub<span className="text-purple-400">Dir</span>
           </h1>
           <p className="text-base sm:text-lg md:text-xl text-gray-300 mb-2">
-            A searchable directory of {totalSubs.toLocaleString()}+ subreddits
+            {totalSubs === null
+              ? 'A searchable directory of active subreddits'
+              : `A searchable directory of ${totalSubs.toLocaleString()}+ active subreddits`
+            }
           </p>
           <p className="text-xs sm:text-sm text-gray-400">
             Find communities, discover content, power your apps
@@ -295,7 +298,7 @@ export default function Home() {
             </a>
           </div>
           <p className="text-xs text-gray-500 text-center mt-2">
-            <span className="hidden sm:inline">Downloads include all </span>{totalSubs.toLocaleString()}+ subreddits
+            <span className="hidden sm:inline">Downloads include all </span>{totalSubs !== null ? `${totalSubs.toLocaleString()}+` : ''} active subreddits
           </p>
         </div>
 
@@ -452,28 +455,18 @@ export default function Home() {
 
         {/* Features Section */}
         {!searched && (
-          <div className="max-w-6xl mx-auto grid sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6 md:gap-8 mt-12 sm:mt-16">
+          <div className="max-w-4xl mx-auto grid sm:grid-cols-2 gap-4 sm:gap-6 md:gap-8 mt-12 sm:mt-16">
             <div className="p-4 sm:p-6 bg-white/5 rounded-lg backdrop-blur-sm border border-white/10">
               <div className="text-3xl sm:text-4xl mb-3 sm:mb-4">🔍</div>
               <h3 className="text-lg sm:text-xl font-semibold text-white mb-2">
                 Fast Search
               </h3>
               <p className="text-gray-400 text-xs sm:text-sm">
-                Instantly search through {totalSubs.toLocaleString()}+ subreddits by name, title, or description
+                Instantly search through {totalSubs !== null ? `${totalSubs.toLocaleString()}+` : 'thousands of'} active subreddits by name, title, or description
               </p>
             </div>
 
             <div className="p-4 sm:p-6 bg-white/5 rounded-lg backdrop-blur-sm border border-white/10">
-              <div className="text-3xl sm:text-4xl mb-3 sm:mb-4">🏷️</div>
-              <h3 className="text-lg sm:text-xl font-semibold text-white mb-2">
-                Smart Categories
-              </h3>
-              <p className="text-gray-400 text-xs sm:text-sm">
-                Filter by categories to discover communities in topics you love
-              </p>
-            </div>
-
-            <div className="p-4 sm:p-6 bg-white/5 rounded-lg backdrop-blur-sm border border-white/10 sm:col-span-2 md:col-span-1">
               <div className="text-3xl sm:text-4xl mb-3 sm:mb-4">📥</div>
               <h3 className="text-lg sm:text-xl font-semibold text-white mb-2">
                 Export Data

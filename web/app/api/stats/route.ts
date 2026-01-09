@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getDb, Stats } from '@/lib/db';
 
-export const dynamic = 'force-dynamic';
+// Revalidate every 5 minutes (300 seconds)
+export const revalidate = 300;
 
 export async function GET() {
   try {
@@ -35,7 +36,11 @@ export async function GET() {
     `).all() as { category: string; count: number }[];
     stats.categories = categoryRows;
 
-    return NextResponse.json(stats);
+    return NextResponse.json(stats, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+      },
+    });
   } catch (error) {
     console.error('Stats error:', error);
     return NextResponse.json(

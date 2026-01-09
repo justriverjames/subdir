@@ -209,10 +209,10 @@ class RedditAPIClient:
 
                 if status == 404:
                     logging.debug(f"Not found (404): {url}")
-                    return None
+                    return {'_http_status': 404}  # Return status code for differentiation
                 elif status == 403:
                     logging.debug(f"Forbidden (403): {url} - likely private/quarantined")
-                    return None
+                    return {'_http_status': 403}  # Return status code for differentiation
                 elif status >= 500:
                     # Server error, retry with backoff
                     logging.warning(f"Server error ({status}) for {url}, retrying...")
@@ -255,9 +255,15 @@ class RedditAPIClient:
             data = await self._make_request('GET', url)
 
             if data is None:
-                # Could be 404, 403, or redirect
-                # Try to determine exact status
-                return None, 'deleted'
+                # General error
+                return None, 'error'
+
+            # Check for HTTP status markers
+            if isinstance(data, dict) and '_http_status' in data:
+                if data['_http_status'] == 404:
+                    return None, 'notfound'
+                elif data['_http_status'] == 403:
+                    return None, 'deleted'
 
             if data and 'data' in data:
                 subreddit_data = data['data']

@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
   const categoryParam = searchParams.get('category');
   const nsfwParam = searchParams.get('nsfw');
 
-  const limit = Math.min(parseInt(limitParam || '50'), 500);
+  const limit = Math.min(parseInt(limitParam || '1000'), 10000);
 
   if (!query || query.trim().length === 0) {
     return NextResponse.json(
