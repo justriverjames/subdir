@@ -607,23 +607,32 @@ class SubredditScanner:
                                 f"✓ r/{subreddit:<25} {nsfw_flag} {subscribers:>12,} subs (scanned & saved)"
                             )
                             scanned_and_saved += 1
-                        elif status == 'deleted':
-                            # 403/404 response - subreddit is deleted, banned, or doesn't exist
-                            self.consecutive_403s = 0  # Don't count as error since it's valid response
-                            self._track_success()  # Valid API response
-
-                            # Save as deleted and remove from CSV
-                            self.db.update_subreddit_status(subreddit, status)
-                            self.db.update_subreddit(
-                                subreddit, status, f"Status: {status}",
-                                metadata_collected=True
-                            )
-                            logging.warning(f"⚠️  r/{subreddit:<25} - deleted/banned (saved & removed from CSV)")
-                            scanned_and_saved += 1
-                        else:
-                            # Other non-active states (private, quarantined) - reset 403 counter and track success
+                        elif status == 'notfound':
+                            # 404 - subreddit doesn't exist, don't add to DB
                             self.consecutive_403s = 0
-                            self._track_success()  # These are valid API responses
+                            self._track_success()
+
+                            # Remove from DB (was added as pending)
+                            self.db.conn.execute("DELETE FROM subreddits WHERE name = ?", (subreddit,))
+                            self.db.conn.commit()
+                            logging.warning(f"⚠️  r/{subreddit:<25} - 404 not found (not added to DB, removed from CSV)")
+                            # Don't increment scanned_and_saved - we didn't save it
+
+                        elif status == 'deleted':
+                            # 403 - likely deleted/banned, don't add to DB
+                            self.consecutive_403s = 0
+                            self._track_success()
+
+                            # Remove from DB (was added as pending)
+                            self.db.conn.execute("DELETE FROM subreddits WHERE name = ?", (subreddit,))
+                            self.db.conn.commit()
+                            logging.warning(f"⚠️  r/{subreddit:<25} - 403 forbidden (not added to DB, removed from CSV)")
+                            # Don't increment scanned_and_saved - we didn't save it
+
+                        else:
+                            # Other non-active states (private, quarantined) - keep in DB
+                            self.consecutive_403s = 0
+                            self._track_success()
 
                             self.db.update_subreddit_status(subreddit, status)
                             self.db.update_subreddit(

@@ -1,20 +1,22 @@
 # SubDir
 
-**A searchable directory of 29,000+ subreddits** - metadata service for Reddit communities.
+**A searchable directory of 67,000+ active subreddits** - metadata service for Reddit communities.
 
-SubDir provides a clean, fast interface for discovering subreddits with full metadata including subscriber counts, descriptions, NSFW flags, and more.
+SubDir provides a clean, fast interface for discovering subreddits with full metadata including subscriber counts, descriptions, icons, NSFW flags, and more.
 
 ---
 
 ## Features
 
-- **29,404 subreddits** with full metadata
-- **Instant search** - no Reddit API calls needed
+- **67,000+ active subreddits** with full metadata
+- **Instant search** - no Reddit API calls needed, results up to 10k per query
 - **NSFW filtering** - toggle adult content on/off
-- **Rich metadata** - subscribers, descriptions, icons, categories
+- **Rich metadata** - subscribers, descriptions, icons, colors, categories
 - **REST API** for programmatic access
 - **Self-hostable** - run locally or deploy to your VPS
-- **Lightweight** - 8.7MB database
+- **Browse mode** - explore top 3000 subreddits (all/SFW/NSFW)
+- **Optimized** - cached stats, WAL mode, ready for high traffic
+- **Database** - 33MB SQLite (only active subreddits, 100+ subscribers)
 
 ---
 
@@ -40,9 +42,14 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with Reddit API credentials
 
-# Import subreddits and collect metadata
-python main.py --ingest subreddits.csv
-python main.py --metadata
+# Dedupe CSV (fast, no API calls)
+python main.py --dedupe-csv --csv ../data/subreddits.csv
+
+# Scan new subreddits from CSV
+python main.py --scan-csv --csv ../data/subreddits.csv --limit 1000
+
+# Update existing subreddits
+python main.py --update --limit 1000
 ```
 
 See [scanner/README.md](scanner/README.md) for detailed documentation.
@@ -53,21 +60,26 @@ See [scanner/README.md](scanner/README.md) for detailed documentation.
 
 ### 1. Web Frontend (Next.js + TypeScript)
 Modern search interface with:
-- Real-time search across 29,000+ subreddits
-- NSFW content filtering
+- Real-time search across 67,000+ active subreddits
+- Browse top 3000 (all/SFW/NSFW filtered)
+- NSFW content filtering toggle
 - Subreddit icons and branding colors
-- Category badges
-- Export to JSON/CSV
-- Responsive design with Tailwind CSS
+- Autocomplete with icon preview
+- Export to JSON/CSV (full database or filtered)
+- Responsive mobile-friendly design
+- Cached stats (5min) for high traffic
 
-**Stack:** Next.js 16, TypeScript, Tailwind CSS, SQLite (read-only)
+**Stack:** Next.js 16, TypeScript, Tailwind CSS, better-sqlite3 (WAL mode)
 
 ### 2. Scanner (Python CLI)
 Collects subreddit metadata from Reddit API:
-- Metadata: subscribers, descriptions, icons, categories
-- Rate-limited (85 QPM) to respect Reddit's API limits
-- Incremental updates
-- Schema migrations
+- **Metadata:** subscribers, descriptions, icons, colors, categories
+- **Rate-limited (60 QPM)** - balanced for reliability
+- **Smart filtering:** Only active subs with 100+ subscribers
+- **Retry logic:** 404=instant delete, 403=3 retries before removal
+- **Anti-detection:** Randomization, delays, batch pauses
+- **Atomic CSV mode:** Scan + save + remove in one pass
+- **Update mode:** Refresh existing subreddit metadata
 
 **Stack:** Python 3.11+, httpx, SQLite, asyncio
 
@@ -77,31 +89,44 @@ Collects subreddit metadata from Reddit API:
 
 The Next.js app provides internal API routes:
 
-- `GET /api/search?q={query}&limit={n}&nsfw={bool}` - Search subreddits
-- `GET /api/stats` - Database statistics
+- `GET /api/search?q={query}&limit={n}&nsfw={bool}` - Search subreddits (up to 10k results)
+- `GET /api/browse?mode={all|sfw|nsfw}&limit={n}` - Browse top subreddits (up to 5k)
+- `GET /api/autocomplete?q={query}&nsfw={bool}` - Autocomplete suggestions
+- `GET /api/stats` - Database statistics (cached 5min)
 - `GET /api/subreddits/{name}` - Get subreddit details
-- `GET /api/export/json?format=minimal|full` - JSON export
-- `GET /api/export/csv` - CSV export
+- `GET /api/export/json?format=minimal|full&mode={all|sfw|nsfw}` - JSON export
+- `GET /api/export/csv?mode={all|sfw|nsfw}` - CSV export
 
 ---
 
 ## Database Schema
 
-**Current Version:** v3 (migrating to v4)
+**Current Version:** v4
 
 **Core Fields:**
 - name, title, description
 - subscribers, active_users
 - over_18, subreddit_type
 - created_utc, last_updated
+- status (active only - deleted/banned subs removed)
+- retry_count (for update failure tracking)
 
-**v4 Additions (in progress):**
+**Visual/Branding (v4):**
 - icon_url, primary_color
-- advertiser_category (Reddit's category)
-- submission_type, allow_images, allow_videos
-- category, tags (multi-label categorization)
+- advertiser_category (Reddit's internal category)
+- submission_type, allow_images, allow_videos, allow_polls
 
-**Size:** 8.7MB SQLite database
+**Search/Discovery (v4):**
+- category, tags (for future multi-label categorization)
+- language (defaults to 'en')
+
+**Quality Filters:**
+- Only active subreddits (status='active')
+- Minimum 100 subscribers
+- No user profiles (u_*)
+- No deleted/banned/quarantined
+
+**Size:** 33MB SQLite database (67k active subreddits)
 
 ---
 
@@ -136,12 +161,13 @@ subdir/
 │   │   └── api/        # API routes
 │   └── lib/            # Database connection
 │
-├── data/               # SQLite database
-│   └── subreddit_scanner.db
+├── data/               # SQLite database (33MB)
+│   └── subreddit_scanner.db  # 67k active subreddits
 │
 ├── README.md           # This file
 ├── ROADMAP.md          # Development roadmap
-└── MIGRATION_SUMMARY.md # Database migration history
+├── CLAUDE.md           # Developer workflow for Claude
+└── CATEGORIZATION.md   # Future categorization plans
 ```
 
 ---
@@ -179,10 +205,22 @@ Run scanner periodically to refresh metadata:
 ```bash
 cd scanner
 source venv/bin/activate
-python main.py --metadata  # Update existing subreddits
+
+# Update existing subreddits (refreshes metadata)
+python main.py --update --limit 5000
+
+# Scan new subreddits from CSV
+python main.py --scan-csv --csv ../data/new_subs.csv
+
+# Show database statistics
+python main.py --stats
+
+# Compact database after cleanup
+python main.py --vacuum
 ```
 
 **Recommended:** Weekly metadata refresh to keep subscriber counts current.
+**Auto-cleanup:** Scanner automatically removes deleted/banned subs after 3 failed attempts.
 
 ---
 
@@ -190,17 +228,19 @@ python main.py --metadata  # Update existing subreddits
 
 See [ROADMAP.md](ROADMAP.md) for full development plans.
 
-**Current Focus (Pre-v1.0):**
-- ✅ Database migration to v3 (completed)
-- 🚧 Add visual metadata (icons, colors) - v4 schema
-- 🚧 AI-powered categorization using Claude API
-- 🚧 Multi-label tagging system
-- ⏳ Beta testing
+**Current Status (Pre-v1.0):**
+- ✅ Database schema v4 (icons, colors, categories)
+- ✅ 67,000+ active subreddits scanned
+- ✅ Web UI with search, browse, autocomplete
+- ✅ Performance optimizations (caching, WAL mode)
+- ✅ Smart scanner with retry logic and anti-detection
+- ⏳ AI-powered categorization (future - see CATEGORIZATION.md)
+- ⏳ Multi-label tagging system (future)
 
 **v1.0 Goals:**
-- Production-ready web interface
-- Categorized subreddit directory
+- Production-ready web interface ✅
 - Public deployment at subdir.justriverjames.com
+- Weekly automated metadata refresh
 
 ---
 
@@ -219,9 +259,10 @@ Built for the datahoarder and selfhosted communities. Contributions welcome!
 ## Tech Stack
 
 - **Frontend:** Next.js 16, TypeScript, Tailwind CSS
-- **Scanner:** Python 3.11+, httpx, SQLite
-- **Database:** SQLite 3 (8.7MB)
-- **Deployment:** VPS + Nginx + Cloudflare
+- **Scanner:** Python 3.11+, httpx, SQLite, asyncio
+- **Database:** SQLite 3 with WAL mode (33MB, 67k active subreddits)
+- **Deployment:** Debian 13 VPS + Nginx + Cloudflare
+- **Caching:** 5min ISR for stats, HTTP cache headers for CDN
 
 ---
 
