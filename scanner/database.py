@@ -52,6 +52,7 @@ class Database:
         status TEXT,  -- 'pending', 'active', 'private', 'banned', 'quarantined', 'deleted', 'error'
         is_accessible BOOLEAN DEFAULT 1,  -- 0 for banned/deleted/private/quarantined (quick filter)
         last_updated INTEGER,
+        retry_count INTEGER DEFAULT 0,  -- Retry counter for 403/404 errors (--update mode only)
         error_message TEXT,
         metadata_collected BOOLEAN DEFAULT 0
     );

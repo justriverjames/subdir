@@ -1,0 +1,92 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: subdir-archiver-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-reddit_archiver}
+      POSTGRES_USER: ${POSTGRES_USER:-archiver}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-archiver} -d ${POSTGRES_DB:-reddit_archiver}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c work_mem=16MB
+      -c maintenance_work_mem=128MB
+      -c max_connections=50
+
+  scanner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.scanner
+    container_name: subdir-archiver-scanner
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Reddit API credentials
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET}
+      REDDIT_USERNAME: ${REDDIT_USERNAME}
+      REDDIT_PASSWORD: ${REDDIT_PASSWORD}
+      # PostgreSQL (override for Docker network)
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-reddit_archiver}
+      POSTGRES_USER: ${POSTGRES_USER:-archiver}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Archival settings
+      MIN_SUBSCRIBERS: ${MIN_SUBSCRIBERS:-5000}
+      MAX_POSTS_PER_SUBREDDIT: ${MAX_POSTS_PER_SUBREDDIT:-2000}
+      MAX_COMMENTS_PER_POST: ${MAX_COMMENTS_PER_POST:-500}
+      MAX_COMMENT_DEPTH: ${MAX_COMMENT_DEPTH:-5}
+      FILTER_BOTS: ${FILTER_BOTS:-true}
+      # Rate limiting
+      REQUESTS_PER_MINUTE: ${REQUESTS_PER_MINUTE:-60}
+      REQUESTS_PER_10_SECONDS: ${REQUESTS_PER_10_SECONDS:-10}
+      REQUESTS_PER_SECOND: ${REQUESTS_PER_SECOND:-2}
+      # Batch processing
+      BATCH_SIZE: ${BATCH_SIZE:-3}
+    volumes:
+      - scanner_logs:/app/logs
+      # Optional: mount your subdir data directory for import
+      # Uncomment and adjust path as needed:
+      # - /Users/river/code/justriverjames/subdir/data:/app/data:ro
+
+  webui:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.webui
+    container_name: subdir-archiver-webui
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # PostgreSQL connection
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-reddit_archiver}
+      POSTGRES_USER: ${POSTGRES_USER:-archiver}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "8480:8480"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - scanner_logs:/app/logs:ro
+      - ./.env:/app/.env
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  scanner_logs:
+    driver: local

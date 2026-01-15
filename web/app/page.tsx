@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import MiniStats from '@/components/MiniStats';
 
 interface Subreddit {
   name: string;
@@ -29,7 +30,7 @@ export default function Home() {
   const [suggestions, setSuggestions] = useState<Subreddit[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [browseMode, setBrowseMode] = useState<'search' | 'browse'>('search');
-  const [browseFilter, setBrowseFilter] = useState<'all' | 'sfw' | 'nsfw'>('all');
+  const [browseFilter, setBrowseFilter] = useState<'all' | 'sfw' | 'nsfw' | 'random'>('all');
 
   // Fetch active subreddit count on mount
   useEffect(() => {
@@ -106,7 +107,7 @@ export default function Home() {
     }
   };
 
-  const handleBrowse = async (filter: 'all' | 'sfw' | 'nsfw') => {
+  const handleBrowse = async (filter: 'all' | 'sfw' | 'nsfw' | 'random') => {
     setLoading(true);
     setSearched(true);
     setBrowseMode('browse');
@@ -189,6 +190,16 @@ export default function Home() {
             }`}
           >
             Top 3000 (NSFW)
+          </button>
+          <button
+            onClick={() => handleBrowse('random')}
+            className={`px-4 sm:px-6 py-2 rounded-full transition-all text-sm sm:text-base ${
+              browseMode === 'browse' && browseFilter === 'random'
+                ? 'bg-purple-600 text-white'
+                : 'bg-white/10 text-gray-300 hover:bg-white/20'
+            }`}
+          >
+            Random 3000
           </button>
         </div>
 
@@ -303,6 +314,9 @@ export default function Home() {
           </p>
         </div>
 
+        {/* Mini Stats */}
+        {!searched && <MiniStats />}
+
         {/* Results */}
         {searched && (
           <div className="max-w-4xl mx-auto">
@@ -318,7 +332,7 @@ export default function Home() {
                     <p className="text-gray-300 text-sm sm:text-base">
                       {browseMode === 'browse' ? (
                         <>
-                          Top {results.length} <span className="hidden sm:inline">subreddits {browseFilter === 'sfw' ? '(SFW only)' : browseFilter === 'nsfw' ? '(NSFW only)' : '(All)'}</span>
+                          {browseFilter === 'random' ? 'Random' : 'Top'} {results.length} <span className="hidden sm:inline">subreddits {browseFilter === 'sfw' ? '(SFW only)' : browseFilter === 'nsfw' ? '(NSFW only)' : browseFilter === 'random' ? '(Random)' : '(All)'}</span>
                         </>
                       ) : (
                         <>Found {results.length}<span className="hidden sm:inline"> subreddits</span></>

@@ -267,6 +267,7 @@ def ensure_v4_columns(conn: sqlite3.Connection):
         ('spoilers_enabled', 'BOOLEAN DEFAULT 0'),
         ('whitelist_status', 'INTEGER'),
         ('is_accessible', 'BOOLEAN DEFAULT 1'),
+        ('retry_count', 'INTEGER DEFAULT 0'),
     ]
 
     # Get existing columns

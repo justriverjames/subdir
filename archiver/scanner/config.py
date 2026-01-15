@@ -1,0 +1,142 @@
+import os
+from dataclasses import dataclass
+from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ArchiverConfig:
+    """Configuration for Reddit archiver scanner"""
+
+    # Reddit API credentials
+    reddit_client_id: str
+    reddit_client_secret: str
+    reddit_username: str
+    reddit_password: str
+    user_agent: str
+
+    # PostgreSQL connection
+    postgres_host: str = 'localhost'
+    postgres_port: int = 5432
+    postgres_db: str = 'reddit_archiver'
+    postgres_user: str = 'archiver'
+    postgres_password: str = ''
+
+    # Processing configuration
+    min_subscribers: int = 5000
+    max_posts_per_subreddit: int = 2000
+    max_comments_per_post: int = 500
+    max_comment_depth: int = 5
+    filter_bots: bool = True
+
+    # Rate limiting (conservative)
+    requests_per_minute: int = 60
+    requests_per_10_seconds: int = 10
+    requests_per_second: int = 2
+
+    # Delays (human-like behavior)
+    min_request_delay: float = 1.5
+    max_request_delay: float = 3.0
+    subreddit_cooldown: float = 2.0
+
+    # Batch processing
+    batch_pause_interval: int = 50
+    batch_pause_min: float = 45.0
+    batch_pause_max: float = 90.0
+
+    # Safety limits
+    max_consecutive_403: int = 5
+    max_total_429: int = 2
+
+    # Logging
+    log_level: str = 'INFO'
+
+    @classmethod
+    def from_env(cls) -> 'ArchiverConfig':
+        """Load configuration from environment variables"""
+
+        # Required credentials
+        required = [
+            'REDDIT_CLIENT_ID',
+            'REDDIT_CLIENT_SECRET',
+            'REDDIT_USERNAME',
+            'REDDIT_PASSWORD'
+        ]
+
+        missing = [k for k in required if not os.getenv(k)]
+        if missing:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
+
+        # User agent
+        username = os.getenv('REDDIT_USERNAME')
+        user_agent = os.getenv('USER_AGENT', f'linux:reddit-archiver:v1.0 (by /u/{username})')
+
+        config = cls(
+            # Reddit API
+            reddit_client_id=os.getenv('REDDIT_CLIENT_ID'),
+            reddit_client_secret=os.getenv('REDDIT_CLIENT_SECRET'),
+            reddit_username=os.getenv('REDDIT_USERNAME'),
+            reddit_password=os.getenv('REDDIT_PASSWORD'),
+            user_agent=user_agent,
+
+            # PostgreSQL
+            postgres_host=os.getenv('POSTGRES_HOST', 'localhost'),
+            postgres_port=int(os.getenv('POSTGRES_PORT', '5432')),
+            postgres_db=os.getenv('POSTGRES_DB', 'reddit_archiver'),
+            postgres_user=os.getenv('POSTGRES_USER', 'archiver'),
+            postgres_password=os.getenv('POSTGRES_PASSWORD', ''),
+
+            # Processing
+            min_subscribers=int(os.getenv('MIN_SUBSCRIBERS', '5000')),
+            max_posts_per_subreddit=int(os.getenv('MAX_POSTS_PER_SUBREDDIT', '2000')),
+            max_comments_per_post=int(os.getenv('MAX_COMMENTS_PER_POST', '500')),
+            max_comment_depth=int(os.getenv('MAX_COMMENT_DEPTH', '5')),
+            filter_bots=os.getenv('FILTER_BOTS', 'true').lower() == 'true',
+
+            # Rate limiting
+            requests_per_minute=int(os.getenv('REQUESTS_PER_MINUTE', '60')),
+            requests_per_10_seconds=int(os.getenv('REQUESTS_PER_10_SECONDS', '10')),
+            requests_per_second=int(os.getenv('REQUESTS_PER_SECOND', '2')),
+
+            # Logging
+            log_level=os.getenv('LOG_LEVEL', 'INFO')
+        )
+
+        logger.info("Configuration loaded from environment")
+        logger.info(f"Rate limits: {config.requests_per_minute}/min, {config.requests_per_10_seconds}/10s")
+        logger.info(f"Min subscribers: {config.min_subscribers}")
+        logger.info(f"Max posts per subreddit: {config.max_posts_per_subreddit}")
+
+        return config
+
+    def validate(self):
+        """Validate configuration values"""
+        errors = []
+
+        # Check rate limits are sensible
+        if self.requests_per_minute > 90:
+            errors.append("requests_per_minute too high (max 90 to stay safe)")
+
+        if self.requests_per_10_seconds > 15:
+            errors.append("requests_per_10_seconds too high (max 15)")
+
+        # Check delays
+        if self.min_request_delay < 0.5:
+            errors.append("min_request_delay too low (min 0.5s)")
+
+        if self.max_request_delay < self.min_request_delay:
+            errors.append("max_request_delay must be >= min_request_delay")
+
+        # Check processing limits
+        if self.max_posts_per_subreddit < 100:
+            errors.append("max_posts_per_subreddit too low (min 100)")
+
+        if self.max_posts_per_subreddit > 2000:
+            errors.append("max_posts_per_subreddit too high (max 2000 for top+hot)")
+
+        if errors:
+            raise ValueError(f"Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
+
+        logger.info("Configuration validated successfully")

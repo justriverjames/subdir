@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SubDir Archiver</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0f0f0f;
+            color: #e0e0e0;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: #1a1a1a;
+            border-bottom: 2px solid #2a2a2a;
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            color: #ff6b35;
+            margin-bottom: 0.5rem;
+        }
+
+        .header-info {
+            display: flex;
+            gap: 2rem;
+            font-size: 0.875rem;
+            color: #888;
+        }
+
+        .header-info span {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #666;
+        }
+
+        .status-indicator.running {
+            background: #4ade80;
+            animation: pulse 2s infinite;
+        }
+
+        .status-indicator.stopped {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        .tab {
+            padding: 0.75rem 1.5rem;
+            background: transparent;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            color: #e0e0e0;
+        }
+
+        .tab.active {
+            color: #ff6b35;
+            border-bottom-color: #ff6b35;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+
+        .stat-card h3 {
+            font-size: 0.875rem;
+            color: #888;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .stat-card .value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #ff6b35;
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        button {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #ff6b35;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #ff5522;
+        }
+
+        .btn-secondary {
+            background: #2a2a2a;
+            color: #e0e0e0;
+        }
+
+        .btn-secondary:hover {
+            background: #3a3a3a;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .logs-container {
+            background: #0a0a0a;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            height: 600px;
+            overflow-y: auto;
+            padding: 1rem;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.75rem;
+            line-height: 1.4;
+        }
+
+        .log-line {
+            margin-bottom: 0.25rem;
+            color: #888;
+        }
+
+        .log-line.info {
+            color: #4ade80;
+        }
+
+        .log-line.warning {
+            color: #fbbf24;
+        }
+
+        .log-line.error {
+            color: #ef4444;
+        }
+
+        .table-container {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            background: #2a2a2a;
+            padding: 1rem;
+            text-align: left;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        td {
+            padding: 1rem;
+            border-top: 1px solid #2a2a2a;
+            font-size: 0.875rem;
+        }
+
+        tr:hover {
+            background: #1f1f1f;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge.active {
+            background: #4ade80;
+            color: #0a0a0a;
+        }
+
+        .badge.pending {
+            background: #fbbf24;
+            color: #0a0a0a;
+        }
+
+        .badge.processing {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .badge.error {
+            background: #ef4444;
+            color: white;
+        }
+
+        .search-bar {
+            margin-bottom: 1rem;
+            display: flex;
+            gap: 1rem;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        select {
+            padding: 0.75rem;
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-size: 0.875rem;
+        }
+
+        input[type="text"]:focus,
+        input[type="number"]:focus,
+        select:focus {
+            outline: none;
+            border-color: #ff6b35;
+        }
+
+        .config-form {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .form-group label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #888;
+        }
+
+        .form-group input {
+            width: 100%;
+        }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+            font-size: 0.875rem;
+        }
+
+        .alert.success {
+            background: rgba(74, 222, 128, 0.1);
+            border: 1px solid #4ade80;
+            color: #4ade80;
+        }
+
+        .alert.error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid #ef4444;
+            color: #ef4444;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: #666;
+        }
+
+        .empty-state h3 {
+            font-size: 1.25rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #888;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 2rem;
+            max-width: 500px;
+            width: 90%;
+        }
+
+        .modal-header {
+            margin-bottom: 1.5rem;
+        }
+
+        .modal-header h2 {
+            font-size: 1.25rem;
+            color: #e0e0e0;
+        }
+
+        .modal-footer {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>SubDir Archiver</h1>
+        <div class="header-info">
+            <span>
+                <div class="status-indicator" id="scanner-status-indicator"></div>
+                Scanner: <strong id="scanner-status-text">Unknown</strong>
+            </span>
+            <span>Last updated: <strong id="last-updated">--</strong></span>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="tabs">
+            <button class="tab active" data-tab="dashboard">Dashboard</button>
+            <button class="tab" data-tab="subreddits">Subreddits</button>
+            <button class="tab" data-tab="logs">Logs</button>
+            <button class="tab" data-tab="config">Configuration</button>
+        </div>
+
+        <!-- Dashboard Tab -->
+        <div class="tab-content active" id="dashboard">
+            <div class="controls">
+                <button class="btn-primary" onclick="startScanner()">Start Scanner</button>
+                <button class="btn-secondary" onclick="stopScanner()">Stop Scanner</button>
+                <button class="btn-secondary" onclick="restartScanner()">Restart Scanner</button>
+                <button class="btn-secondary" onclick="refreshDashboard()">Refresh</button>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Active Subreddits</h3>
+                    <div class="value" id="stat-active">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Pending</h3>
+                    <div class="value" id="stat-pending">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Total Posts</h3>
+                    <div class="value" id="stat-posts">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Total Comments</h3>
+                    <div class="value" id="stat-comments">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Media URLs</h3>
+                    <div class="value" id="stat-media">0</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Processing</h3>
+                    <div class="value" id="stat-processing">0</div>
+                </div>
+            </div>
+
+            <h2 style="margin-bottom: 1rem; font-size: 1.25rem;">Recent Activity</h2>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Subreddit</th>
+                            <th>Status</th>
+                            <th>Posts</th>
+                            <th>Comments</th>
+                            <th>Last Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody id="recent-activity">
+                        <tr><td colspan="5" class="loading">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Subreddits Tab -->
+        <div class="tab-content" id="subreddits">
+            <div class="search-bar">
+                <input type="text" id="search-input" placeholder="Search subreddits...">
+                <select id="status-filter">
+                    <option value="">All Status</option>
+                    <option value="pending">Pending</option>
+                    <option value="processing">Processing</option>
+                    <option value="active">Active</option>
+                    <option value="error">Error</option>
+                </select>
+                <button class="btn-primary" onclick="showAddSubredditModal()">Add Subreddit</button>
+                <button class="btn-secondary" onclick="loadSubreddits()">Refresh</button>
+            </div>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Status</th>
+                            <th>Subscribers</th>
+                            <th>Posts</th>
+                            <th>Comments</th>
+                            <th>Media URLs</th>
+                            <th>Last Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody id="subreddits-table">
+                        <tr><td colspan="7" class="loading">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Logs Tab -->
+        <div class="tab-content" id="logs">
+            <div class="controls">
+                <button class="btn-primary" onclick="connectLogsWebSocket()">Live Stream</button>
+                <button class="btn-secondary" onclick="disconnectLogsWebSocket()">Stop Stream</button>
+                <button class="btn-secondary" onclick="loadRecentLogs()">Load Recent</button>
+                <button class="btn-secondary" onclick="clearLogs()">Clear</button>
+            </div>
+            <div class="logs-container" id="logs-container">
+                <div class="log-line">Click "Live Stream" to see real-time logs...</div>
+            </div>
+        </div>
+
+        <!-- Config Tab -->
+        <div class="tab-content" id="config">
+            <div id="config-alert"></div>
+            <div class="config-form" id="config-form">
+                <div class="loading">Loading configuration...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Subreddit Modal -->
+    <div class="modal" id="add-subreddit-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Add Subreddit</h2>
+            </div>
+            <div class="form-group">
+                <label>Subreddit Name</label>
+                <input type="text" id="new-subreddit-name" placeholder="e.g., python">
+            </div>
+            <div class="form-group">
+                <label>Priority</label>
+                <input type="number" id="new-subreddit-priority" value="1" min="1" max="10">
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="hideAddSubredditModal()">Cancel</button>
+                <button class="btn-primary" onclick="addSubreddit()">Add</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let logsWebSocket = null;
+        let autoRefreshInterval = null;
+
+        // Tab switching
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                const tabName = tab.dataset.tab;
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById(tabName).classList.add('active');
+
+                // Load data when switching tabs
+                if (tabName === 'dashboard') refreshDashboard();
+                if (tabName === 'subreddits') loadSubreddits();
+                if (tabName === 'config') loadConfig();
+            });
+        });
+
+        // Auto-refresh dashboard every 5 seconds
+        function startAutoRefresh() {
+            autoRefreshInterval = setInterval(() => {
+                const dashboardTab = document.querySelector('.tab-content#dashboard');
+                if (dashboardTab.classList.contains('active')) {
+                    refreshDashboard();
+                }
+            }, 5000);
+        }
+
+        // Scanner control
+        async function startScanner() {
+            try {
+                const res = await fetch('/api/scanner/start', { method: 'POST' });
+                const data = await res.json();
+                alert(data.message);
+                updateScannerStatus();
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function stopScanner() {
+            try {
+                const res = await fetch('/api/scanner/stop', { method: 'POST' });
+                const data = await res.json();
+                alert(data.message);
+                updateScannerStatus();
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function restartScanner() {
+            try {
+                const res = await fetch('/api/scanner/restart', { method: 'POST' });
+                const data = await res.json();
+                alert(data.message);
+                updateScannerStatus();
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        async function updateScannerStatus() {
+            try {
+                const res = await fetch('/api/scanner/status');
+                const data = await res.json();
+                const indicator = document.getElementById('scanner-status-indicator');
+                const statusText = document.getElementById('scanner-status-text');
+
+                indicator.className = 'status-indicator';
+                if (data.status === 'running') {
+                    indicator.classList.add('running');
+                    statusText.textContent = 'Running';
+                } else {
+                    indicator.classList.add('stopped');
+                    statusText.textContent = data.status === 'not_found' ? 'Not Found' : 'Stopped';
+                }
+            } catch (e) {
+                console.error('Error updating scanner status:', e);
+            }
+        }
+
+        // Dashboard
+        async function refreshDashboard() {
+            try {
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+
+                document.getElementById('stat-active').textContent = formatNumber(data.stats.active_subreddits);
+                document.getElementById('stat-pending').textContent = formatNumber(data.stats.pending_subreddits);
+                document.getElementById('stat-posts').textContent = formatNumber(data.stats.total_posts);
+                document.getElementById('stat-comments').textContent = formatNumber(data.stats.total_comments);
+                document.getElementById('stat-media').textContent = formatNumber(data.stats.total_media_urls);
+                document.getElementById('stat-processing').textContent = formatNumber(data.stats.processing_subreddits);
+
+                const tbody = document.getElementById('recent-activity');
+                if (data.recent_activity.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No activity yet</td></tr>';
+                } else {
+                    tbody.innerHTML = data.recent_activity.map(sub => `
+                        <tr>
+                            <td>r/${sub.name}</td>
+                            <td><span class="badge ${sub.status}">${sub.status}</span></td>
+                            <td>${formatNumber(sub.total_posts)}</td>
+                            <td>${formatNumber(sub.total_comments)}</td>
+                            <td>${formatDate(sub.last_metadata_update)}</td>
+                        </tr>
+                    `).join('');
+                }
+
+                document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+            } catch (e) {
+                console.error('Error refreshing dashboard:', e);
+            }
+        }
+
+        // Subreddits
+        async function loadSubreddits() {
+            const search = document.getElementById('search-input').value;
+            const status = document.getElementById('status-filter').value;
+
+            try {
+                let url = '/api/subreddits?limit=100';
+                if (search) url += `&search=${encodeURIComponent(search)}`;
+                if (status) url += `&status=${encodeURIComponent(status)}`;
+
+                const res = await fetch(url);
+                const data = await res.json();
+
+                const tbody = document.getElementById('subreddits-table');
+                if (data.subreddits.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No subreddits found</td></tr>';
+                } else {
+                    tbody.innerHTML = data.subreddits.map(sub => `
+                        <tr>
+                            <td>r/${sub.name}</td>
+                            <td><span class="badge ${sub.status}">${sub.status}</span></td>
+                            <td>${formatNumber(sub.subscribers)}</td>
+                            <td>${formatNumber(sub.total_posts)}</td>
+                            <td>${formatNumber(sub.total_comments)}</td>
+                            <td>${formatNumber(sub.total_media_urls)}</td>
+                            <td>${formatDate(sub.last_metadata_update)}</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error('Error loading subreddits:', e);
+            }
+        }
+
+        document.getElementById('search-input').addEventListener('input', loadSubreddits);
+        document.getElementById('status-filter').addEventListener('change', loadSubreddits);
+
+        function showAddSubredditModal() {
+            document.getElementById('add-subreddit-modal').classList.add('active');
+        }
+
+        function hideAddSubredditModal() {
+            document.getElementById('add-subreddit-modal').classList.remove('active');
+            document.getElementById('new-subreddit-name').value = '';
+            document.getElementById('new-subreddit-priority').value = '1';
+        }
+
+        async function addSubreddit() {
+            const name = document.getElementById('new-subreddit-name').value.trim().replace(/^r\//, '');
+            const priority = parseInt(document.getElementById('new-subreddit-priority').value);
+
+            if (!name) {
+                alert('Please enter a subreddit name');
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/subreddit/add?name=${encodeURIComponent(name)}&priority=${priority}`, {
+                    method: 'POST'
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    alert(data.message);
+                    hideAddSubredditModal();
+                    loadSubreddits();
+                } else {
+                    alert('Error: ' + data.detail);
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        // Logs
+        function connectLogsWebSocket() {
+            if (logsWebSocket) {
+                logsWebSocket.close();
+            }
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            logsWebSocket = new WebSocket(`${protocol}//${window.location.host}/ws/logs`);
+
+            logsWebSocket.onmessage = (event) => {
+                const container = document.getElementById('logs-container');
+                const line = document.createElement('div');
+                line.className = 'log-line';
+
+                const text = event.data;
+                if (text.includes('ERROR') || text.includes('error')) {
+                    line.classList.add('error');
+                } else if (text.includes('WARNING') || text.includes('warning')) {
+                    line.classList.add('warning');
+                } else if (text.includes('INFO')) {
+                    line.classList.add('info');
+                }
+
+                line.textContent = text;
+                container.appendChild(line);
+                container.scrollTop = container.scrollHeight;
+            };
+
+            logsWebSocket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            logsWebSocket.onclose = () => {
+                console.log('WebSocket closed');
+            };
+        }
+
+        function disconnectLogsWebSocket() {
+            if (logsWebSocket) {
+                logsWebSocket.close();
+                logsWebSocket = null;
+            }
+        }
+
+        async function loadRecentLogs() {
+            try {
+                const res = await fetch('/api/logs?lines=100');
+                const data = await res.json();
+
+                const container = document.getElementById('logs-container');
+                container.innerHTML = '';
+
+                data.logs.forEach(logLine => {
+                    if (!logLine.trim()) return;
+
+                    const line = document.createElement('div');
+                    line.className = 'log-line';
+
+                    if (logLine.includes('ERROR') || logLine.includes('error')) {
+                        line.classList.add('error');
+                    } else if (logLine.includes('WARNING') || logLine.includes('warning')) {
+                        line.classList.add('warning');
+                    } else if (logLine.includes('INFO')) {
+                        line.classList.add('info');
+                    }
+
+                    line.textContent = logLine;
+                    container.appendChild(line);
+                });
+
+                container.scrollTop = container.scrollHeight;
+            } catch (e) {
+                console.error('Error loading logs:', e);
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('logs-container').innerHTML = '';
+        }
+
+        // Configuration
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                const data = await res.json();
+
+                const form = document.getElementById('config-form');
+                form.innerHTML = '';
+
+                const configGroups = {
+                    'Reddit API': ['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET', 'REDDIT_USERNAME', 'REDDIT_PASSWORD'],
+                    'PostgreSQL': ['POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_PORT'],
+                    'Archival Settings': ['MIN_SUBSCRIBERS', 'MAX_POSTS_PER_SUBREDDIT', 'MAX_COMMENTS_PER_POST', 'MAX_COMMENT_DEPTH', 'FILTER_BOTS'],
+                    'Rate Limiting': ['REQUESTS_PER_MINUTE', 'REQUESTS_PER_10_SECONDS', 'REQUESTS_PER_SECOND'],
+                    'Processing': ['BATCH_SIZE']
+                };
+
+                for (const [groupName, keys] of Object.entries(configGroups)) {
+                    const heading = document.createElement('h3');
+                    heading.style.marginTop = '1.5rem';
+                    heading.style.marginBottom = '1rem';
+                    heading.style.fontSize = '1rem';
+                    heading.style.color = '#e0e0e0';
+                    heading.textContent = groupName;
+                    form.appendChild(heading);
+
+                    keys.forEach(key => {
+                        const value = data.config[key] || '';
+                        const group = document.createElement('div');
+                        group.className = 'form-group';
+
+                        const label = document.createElement('label');
+                        label.textContent = key.replace(/_/g, ' ');
+
+                        const input = document.createElement('input');
+                        input.type = 'text';
+                        input.id = `config-${key}`;
+                        input.value = value;
+
+                        group.appendChild(label);
+                        group.appendChild(input);
+                        form.appendChild(group);
+                    });
+                }
+
+                const saveBtn = document.createElement('button');
+                saveBtn.className = 'btn-primary';
+                saveBtn.textContent = 'Save Configuration';
+                saveBtn.onclick = saveConfig;
+                saveBtn.style.marginTop = '1rem';
+                form.appendChild(saveBtn);
+            } catch (e) {
+                console.error('Error loading config:', e);
+            }
+        }
+
+        async function saveConfig() {
+            const updates = {};
+            document.querySelectorAll('[id^="config-"]').forEach(input => {
+                const key = input.id.replace('config-', '');
+                updates[key] = input.value;
+            });
+
+            try {
+                const res = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updates)
+                });
+                const data = await res.json();
+
+                const alertDiv = document.getElementById('config-alert');
+                if (res.ok) {
+                    alertDiv.innerHTML = `<div class="alert success">${data.message}</div>`;
+                } else {
+                    alertDiv.innerHTML = `<div class="alert error">Error: ${data.detail}</div>`;
+                }
+
+                setTimeout(() => {
+                    alertDiv.innerHTML = '';
+                }, 5000);
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        // Utilities
+        function formatNumber(num) {
+            if (!num) return '0';
+            return num.toLocaleString();
+        }
+
+        function formatDate(timestamp) {
+            if (!timestamp) return 'Never';
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleString();
+        }
+
+        // Initialize
+        updateScannerStatus();
+        refreshDashboard();
+        startAutoRefresh();
+
+        setInterval(updateScannerStatus, 10000);
+    </script>
+</body>
+</html>

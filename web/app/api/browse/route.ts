@@ -4,7 +4,7 @@ import { getDb } from '@/lib/db';
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const limitParam = searchParams.get('limit');
-  const modeParam = searchParams.get('mode'); // 'all', 'sfw', 'nsfw'
+  const modeParam = searchParams.get('mode'); // 'all', 'sfw', 'nsfw', 'random'
 
   const limit = Math.min(parseInt(limitParam || '1000'), 5000);
   const mode = modeParam || 'all';
@@ -30,7 +30,12 @@ export async function GET(request: NextRequest) {
       sql += ` AND over_18 = 1`;
     }
 
-    sql += ` ORDER BY subscribers DESC NULLS LAST LIMIT ?`;
+    // Order randomly or by subscribers
+    if (mode === 'random') {
+      sql += ` ORDER BY RANDOM() LIMIT ?`;
+    } else {
+      sql += ` ORDER BY subscribers DESC NULLS LAST LIMIT ?`;
+    }
     params.push(limit);
 
     const stmt = db.prepare(sql);
