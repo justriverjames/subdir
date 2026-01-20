@@ -220,12 +220,18 @@ class Database:
                 return [dict(row) for row in cur.fetchall()]
 
     def get_posts_for_media_extraction(self, subreddit: str) -> List[Dict]:
-        """Get posts that need media extraction"""
+        """Get posts that need media extraction - includes columns + metadata"""
         with self.get_connection() as conn:
             with conn.cursor(cursor_factory=extras.RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT id, subreddit, metadata
+                    SELECT
+                        id,
+                        subreddit,
+                        url,
+                        is_video,
+                        post_type,
+                        metadata
                     FROM posts
                     WHERE subreddit = %s
                         AND media_extracted = FALSE
@@ -233,7 +239,21 @@ class Database:
                     """,
                     (subreddit,)
                 )
-                return [dict(row) for row in cur.fetchall()]
+                rows = cur.fetchall()
+
+                # Merge metadata into main dict for processing
+                result = []
+                for row in rows:
+                    post_dict = dict(row)
+                    metadata = post_dict.pop('metadata', {}) or {}
+                    # Merge metadata fields into post_dict
+                    post_dict.update(metadata)
+                    # Check if gallery based on post_type or gallery_data having actual content
+                    post_dict['is_gallery'] = (post_dict.get('post_type') == 'gallery' or
+                                               bool(post_dict.get('gallery_data')))
+                    result.append(post_dict)
+
+                return result
 
     def update_post_comment_status(self, post_id: str, status: str, comment_count: int):
         """Update post comment fetch status"""
@@ -425,6 +445,218 @@ class Database:
                 stats['subreddits_in_progress'] = cur.fetchone()[0]
 
                 return stats
+
+    # Two-tier processing operations
+
+    def get_subreddits_for_posts(self, limit: int = 50, min_subscribers: int = 5000) -> List[Dict]:
+        """Get subreddits that need posts processing (metadata + posts + media)"""
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM subreddits
+                    WHERE posts_status = 'pending'
+                        AND (subscribers IS NULL OR subscribers >= %s)
+                        AND retry_count < 3
+                    ORDER BY priority ASC, subscribers DESC NULLS LAST
+                    LIMIT %s
+                    """,
+                    (min_subscribers, limit)
+                )
+                return [dict(row) for row in cur.fetchall()]
+
+    def get_posts_for_comments_batch(self, limit: int = 5, spread_across_subs: bool = True) -> List[Dict]:
+        """
+        Get posts needing comments, optionally spread across multiple subreddits.
+        Returns posts ordered by: comments_status='processing' first, then by score.
+        """
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=extras.RealDictCursor) as cur:
+                if spread_across_subs:
+                    # Get distinct subreddits first, then one high-scoring post from each
+                    cur.execute(
+                        """
+                        WITH subs_needing_comments AS (
+                            SELECT DISTINCT p.subreddit
+                            FROM posts p
+                            JOIN subreddits s ON p.subreddit = s.name
+                            WHERE p.comment_fetch_status = 'pending'
+                                AND s.posts_status = 'completed'
+                            ORDER BY s.comments_status = 'processing' DESC,
+                                     s.subscribers DESC NULLS LAST
+                            LIMIT %s
+                        ),
+                        ranked_posts AS (
+                            SELECT p.*,
+                                   ROW_NUMBER() OVER (PARTITION BY p.subreddit ORDER BY p.score DESC) as rn
+                            FROM posts p
+                            WHERE p.subreddit IN (SELECT subreddit FROM subs_needing_comments)
+                                AND p.comment_fetch_status = 'pending'
+                        )
+                        SELECT id, subreddit, title
+                        FROM ranked_posts
+                        WHERE rn = 1
+                        ORDER BY subreddit
+                        """,
+                        (limit,)
+                    )
+                else:
+                    # Just get top posts by score regardless of subreddit
+                    cur.execute(
+                        """
+                        SELECT p.id, p.subreddit, p.title
+                        FROM posts p
+                        JOIN subreddits s ON p.subreddit = s.name
+                        WHERE p.comment_fetch_status = 'pending'
+                            AND s.posts_status = 'completed'
+                        ORDER BY p.score DESC
+                        LIMIT %s
+                        """,
+                        (limit,)
+                    )
+                return [dict(row) for row in cur.fetchall()]
+
+    def mark_posts_complete(self, subreddit: str):
+        """Mark posts processing (posts + media) as completed for subreddit"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                now = int(time.time())
+                cur.execute(
+                    """
+                    UPDATE subreddits
+                    SET posts_status = 'completed',
+                        posts_completed_at = %s,
+                        comments_status = CASE
+                            WHEN archive_comments THEN 'pending'
+                            ELSE 'skipped'
+                        END,
+                        posts_pending_comments = (
+                            SELECT COUNT(*)
+                            FROM posts
+                            WHERE subreddit = %s AND comment_fetch_status = 'pending'
+                        )
+                    WHERE name = %s
+                    """,
+                    (now, subreddit, subreddit)
+                )
+
+    def mark_comments_complete(self, subreddit: str):
+        """Mark comments processing as completed for subreddit"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE subreddits
+                    SET comments_status = 'completed',
+                        comments_completed_at = %s,
+                        posts_pending_comments = 0
+                    WHERE name = %s
+                    """,
+                    (int(time.time()), subreddit)
+                )
+
+    def update_processing_tier_status(self, subreddit: str, tier: str, status: str):
+        """Update tier status (pending, processing, completed, error). Tier is 'posts' or 'comments'."""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                tier_col = f'{tier}_status'
+                cur.execute(
+                    f"""
+                    UPDATE subreddits
+                    SET {tier_col} = %s
+                    WHERE name = %s
+                    """,
+                    (status, subreddit)
+                )
+
+    def update_posts_pending_comments(self, subreddit: str):
+        """Recalculate and update posts_pending_comments count"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE subreddits
+                    SET posts_pending_comments = (
+                        SELECT COUNT(*)
+                        FROM posts
+                        WHERE subreddit = %s AND comment_fetch_status = 'pending'
+                    )
+                    WHERE name = %s
+                    """,
+                    (subreddit, subreddit)
+                )
+
+    # Scanner state operations
+
+    def get_scanner_state(self) -> Dict:
+        """Get global scanner state"""
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=extras.RealDictCursor) as cur:
+                cur.execute("SELECT * FROM scanner_state WHERE id = 1")
+                row = cur.fetchone()
+                return dict(row) if row else {}
+
+    def update_scanner_state(self, **kwargs):
+        """Update scanner state fields"""
+        if not kwargs:
+            return
+
+        set_clause = ', '.join(f"{k} = %s" for k in kwargs.keys())
+        values = list(kwargs.values())
+
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    UPDATE scanner_state
+                    SET {set_clause}, updated_at = %s
+                    WHERE id = 1
+                    """,
+                    values + [int(time.time())]
+                )
+
+    def update_processing_tier_activity(self, tier: str):
+        """Record activity for a tier ('posts' or 'comments')"""
+        field = f'last_{tier}_activity'
+        self.update_scanner_state(**{field: int(time.time())})
+
+    def increment_processing_tier_processed(self, tier: str, count: int = 1):
+        """Increment processed count for tier ('posts' or 'comments')"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                field = f'{tier}_subs_processed' if tier == 'posts' else f'{tier}_posts_processed'
+                cur.execute(
+                    f"""
+                    UPDATE scanner_state
+                    SET {field} = {field} + %s,
+                        updated_at = %s
+                    WHERE id = 1
+                    """,
+                    (count, int(time.time()))
+                )
+
+    def check_pause(self) -> Optional[int]:
+        """Check if scanner is paused, returns seconds remaining"""
+        state = self.get_scanner_state()
+        pause_until = state.get('pause_until')
+        if not pause_until:
+            return None
+
+        now = int(time.time())
+        if now < pause_until:
+            return pause_until - now
+        return None
+
+    def set_pause(self, duration_seconds: int):
+        """Pause scanner for specified duration"""
+        pause_until = int(time.time()) + duration_seconds
+        self.update_scanner_state(pause_until=pause_until)
+        logger.info(f"Scanner paused for {duration_seconds}s")
+
+    def clear_pause(self):
+        """Clear pause"""
+        self.update_scanner_state(pause_until=None)
 
     # Migration operations
 

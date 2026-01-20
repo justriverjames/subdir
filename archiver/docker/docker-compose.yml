@@ -1,14 +1,23 @@
+name: subdir-archiver
+
+networks:
+  archiver-network:
+    name: subdir-archiver-network
+    driver: bridge
+
 services:
   postgres:
     image: postgres:16-alpine
     container_name: subdir-archiver-db
+    networks:
+      - archiver-network
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-reddit_archiver}
       POSTGRES_USER: ${POSTGRES_USER:-archiver}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_INITDB_ARGS: "--data-checksums"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - subdir-archiver-postgres-data:/var/lib/postgresql/data
     ports:
       - "${POSTGRES_PORT:-5433}:5432"
     healthcheck:
@@ -28,7 +37,10 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.scanner
+    image: subdir-archiver-scanner:latest
     container_name: subdir-archiver-scanner
+    networks:
+      - archiver-network
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,10 +66,26 @@ services:
       REQUESTS_PER_MINUTE: ${REQUESTS_PER_MINUTE:-60}
       REQUESTS_PER_10_SECONDS: ${REQUESTS_PER_10_SECONDS:-10}
       REQUESTS_PER_SECOND: ${REQUESTS_PER_SECOND:-2}
-      # Batch processing
-      BATCH_SIZE: ${BATCH_SIZE:-3}
+      # Two-tier processing
+      SCANNER_MODE: ${SCANNER_MODE:-both}
+      POSTS_WEIGHT: ${POSTS_WEIGHT:-0.8}
+      COMMENTS_WEIGHT: ${COMMENTS_WEIGHT:-0.2}
+      COMMENTS_BATCH_SIZE: ${COMMENTS_BATCH_SIZE:-5}
+      COMMENTS_COOLDOWN: ${COMMENTS_COOLDOWN:-300}
+      # Anti-detection
+      BREAK_AFTER_SUBS_MIN: ${BREAK_AFTER_SUBS_MIN:-10}
+      BREAK_AFTER_SUBS_MAX: ${BREAK_AFTER_SUBS_MAX:-25}
+      BREAK_DURATION_MIN: ${BREAK_DURATION_MIN:-60}
+      BREAK_DURATION_MAX: ${BREAK_DURATION_MAX:-300}
+      LONG_BREAK_PROBABILITY: ${LONG_BREAK_PROBABILITY:-0.05}
+      SHUFFLE_ORDER: ${SHUFFLE_ORDER:-true}
+      # Batch processing (process 1 subreddit at a time by default for safety)
+      BATCH_SIZE: ${BATCH_SIZE:-1}
+      # Pause between subreddits (seconds)
+      SUBREDDIT_PAUSE_MIN: ${SUBREDDIT_PAUSE_MIN:-30}
+      SUBREDDIT_PAUSE_MAX: ${SUBREDDIT_PAUSE_MAX:-60}
     volumes:
-      - scanner_logs:/app/logs
+      - subdir-archiver-scanner-logs:/app/logs
       # Optional: mount your subdir data directory for import
       # Uncomment and adjust path as needed:
       # - /Users/river/code/justriverjames/subdir/data:/app/data:ro
@@ -66,7 +94,10 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.webui
+    image: subdir-archiver-webui:latest
     container_name: subdir-archiver-webui
+    networks:
+      - archiver-network
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,12 +112,14 @@ services:
       - "8480:8480"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - scanner_logs:/app/logs:ro
+      - subdir-archiver-scanner-logs:/app/logs:ro
       - ./.env:/app/.env
     restart: unless-stopped
 
 volumes:
-  postgres_data:
+  subdir-archiver-postgres-data:
+    name: subdir-archiver-postgres-data
     driver: local
-  scanner_logs:
+  subdir-archiver-scanner-logs:
+    name: subdir-archiver-scanner-logs
     driver: local

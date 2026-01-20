@@ -259,7 +259,7 @@ class Database:
                     WHERE name = ?
                 """, (
                     metadata.get('title'),
-                    metadata.get('public_description'),  # Short description -> description
+                    self._decode_html_entities(metadata.get('public_description')),  # Short description -> description
                     metadata.get('subscribers'),
                     metadata.get('active_user_count'),
                     metadata.get('over18', False),

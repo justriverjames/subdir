@@ -41,6 +41,10 @@ class ArchiverConfig:
     max_request_delay: float = 3.0
     subreddit_cooldown: float = 2.0
 
+    # Subreddit processing pauses (safety)
+    subreddit_pause_min: float = 30.0
+    subreddit_pause_max: float = 60.0
+
     # Batch processing
     batch_pause_interval: int = 50
     batch_pause_min: float = 45.0
@@ -49,6 +53,24 @@ class ArchiverConfig:
     # Safety limits
     max_consecutive_403: int = 5
     max_total_429: int = 2
+
+    # Two-tier processing
+    scanner_mode: str = 'both'  # posts, comments, both
+    posts_weight: float = 0.8
+    comments_weight: float = 0.2
+    comments_batch_size: int = 5
+    comments_cooldown: float = 300.0  # 5 min between comment batches
+
+    # Anti-detection
+    break_after_subs_min: int = 10
+    break_after_subs_max: int = 25
+    break_duration_min: float = 60.0
+    break_duration_max: float = 300.0
+    long_break_probability: float = 0.05
+    long_break_duration_min: float = 900.0
+    long_break_duration_max: float = 3600.0
+    shuffle_order: bool = True
+    shuffle_swap_probability: float = 0.3
 
     # Logging
     log_level: str = 'INFO'
@@ -100,14 +122,34 @@ class ArchiverConfig:
             requests_per_10_seconds=int(os.getenv('REQUESTS_PER_10_SECONDS', '10')),
             requests_per_second=int(os.getenv('REQUESTS_PER_SECOND', '2')),
 
+            # Subreddit pauses
+            subreddit_pause_min=float(os.getenv('SUBREDDIT_PAUSE_MIN', '30.0')),
+            subreddit_pause_max=float(os.getenv('SUBREDDIT_PAUSE_MAX', '60.0')),
+
+            # Two-tier processing
+            scanner_mode=os.getenv('SCANNER_MODE', 'both'),
+            posts_weight=float(os.getenv('POSTS_WEIGHT', '0.8')),
+            comments_weight=float(os.getenv('COMMENTS_WEIGHT', '0.2')),
+            comments_batch_size=int(os.getenv('COMMENTS_BATCH_SIZE', '5')),
+            comments_cooldown=float(os.getenv('COMMENTS_COOLDOWN', '300.0')),
+
+            # Anti-detection
+            break_after_subs_min=int(os.getenv('BREAK_AFTER_SUBS_MIN', '10')),
+            break_after_subs_max=int(os.getenv('BREAK_AFTER_SUBS_MAX', '25')),
+            break_duration_min=float(os.getenv('BREAK_DURATION_MIN', '60.0')),
+            break_duration_max=float(os.getenv('BREAK_DURATION_MAX', '300.0')),
+            long_break_probability=float(os.getenv('LONG_BREAK_PROBABILITY', '0.05')),
+            shuffle_order=os.getenv('SHUFFLE_ORDER', 'true').lower() == 'true',
+
             # Logging
             log_level=os.getenv('LOG_LEVEL', 'INFO')
         )
 
         logger.info("Configuration loaded from environment")
+        logger.info(f"Scanner mode: {config.scanner_mode}")
+        logger.info(f"Rate budget: posts={config.posts_weight:.0%}, comments={config.comments_weight:.0%}")
         logger.info(f"Rate limits: {config.requests_per_minute}/min, {config.requests_per_10_seconds}/10s")
         logger.info(f"Min subscribers: {config.min_subscribers}")
-        logger.info(f"Max posts per subreddit: {config.max_posts_per_subreddit}")
 
         return config
 
@@ -135,6 +177,16 @@ class ArchiverConfig:
 
         if self.max_posts_per_subreddit > 2000:
             errors.append("max_posts_per_subreddit too high (max 2000 for top+hot)")
+
+        # Two-tier settings
+        if self.scanner_mode not in ('posts', 'comments', 'both'):
+            errors.append("scanner_mode must be 'posts', 'comments', or 'both'")
+
+        if not (0.0 <= self.posts_weight <= 1.0):
+            errors.append("posts_weight must be between 0.0 and 1.0")
+
+        if not (0.0 <= self.comments_weight <= 1.0):
+            errors.append("comments_weight must be between 0.0 and 1.0")
 
         if errors:
             raise ValueError(f"Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors))

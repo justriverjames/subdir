@@ -1,6 +1,6 @@
--- Reddit Archiver Initial Schema (v1)
+-- Reddit Archiver Schema
 -- PostgreSQL 16+
--- MVP 1: subreddits, posts, processing_state
+-- Two-tier processing: tier1 (posts/media), tier2 (comments)
 
 -- Subreddits table: metadata and processing state
 CREATE TABLE IF NOT EXISTS subreddits (
@@ -53,6 +53,13 @@ CREATE TABLE IF NOT EXISTS subreddits (
     -- Error tracking
     error_message TEXT,
     retry_count INTEGER DEFAULT 0,
+
+    -- Two-tier processing state (posts + media, then comments)
+    posts_status VARCHAR(50) DEFAULT 'pending',
+    posts_completed_at BIGINT,
+    comments_status VARCHAR(50) DEFAULT 'pending',
+    comments_completed_at BIGINT,
+    posts_pending_comments INTEGER DEFAULT 0,
 
     -- Additional metadata
     metadata JSONB
@@ -177,7 +184,10 @@ CREATE TABLE IF NOT EXISTS media_urls (
     error_message TEXT,
 
     extracted_at BIGINT NOT NULL,
-    metadata JSONB
+    metadata JSONB,
+
+    -- Prevent duplicate media URLs for same post
+    UNIQUE(post_id, url, position)
 );
 
 -- Processing state: resume capability
@@ -203,10 +213,32 @@ CREATE TABLE IF NOT EXISTS processing_state (
     updated_at BIGINT
 );
 
+-- Scanner state: global settings and rate budget (singleton)
+CREATE TABLE IF NOT EXISTS scanner_state (
+    id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    active_mode VARCHAR(20) DEFAULT 'both',
+    posts_rate_budget FLOAT DEFAULT 0.8,
+    comments_rate_budget FLOAT DEFAULT 0.2,
+    last_posts_activity BIGINT,
+    last_comments_activity BIGINT,
+    posts_subs_processed INTEGER DEFAULT 0,
+    comments_posts_processed INTEGER DEFAULT 0,
+    pause_until BIGINT,
+    break_count INTEGER DEFAULT 0,
+    last_break_at BIGINT,
+    created_at BIGINT DEFAULT EXTRACT(EPOCH FROM NOW())::BIGINT,
+    updated_at BIGINT
+);
+
+INSERT INTO scanner_state (id) VALUES (1) ON CONFLICT DO NOTHING;
+
 -- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_subreddits_status ON subreddits(status);
 CREATE INDEX IF NOT EXISTS idx_subreddits_priority ON subreddits(priority, status);
 CREATE INDEX IF NOT EXISTS idx_subreddits_subscribers ON subreddits(subscribers DESC);
+CREATE INDEX IF NOT EXISTS idx_subreddits_posts_status ON subreddits(posts_status);
+CREATE INDEX IF NOT EXISTS idx_subreddits_comments_status ON subreddits(comments_status);
+CREATE INDEX IF NOT EXISTS idx_subreddits_posts_completed ON subreddits(posts_completed_at) WHERE posts_completed_at IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_posts_subreddit ON posts(subreddit);
 CREATE INDEX IF NOT EXISTS idx_posts_created_utc ON posts(created_utc DESC);

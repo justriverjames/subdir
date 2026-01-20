@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import MiniStats from '@/components/MiniStats';
 
 interface Subreddit {
   name: string;
@@ -137,8 +136,8 @@ export default function Home() {
       <div className="container mx-auto px-4 py-6 sm:py-12">
         {/* Header */}
         <div className="text-center mb-8 sm:mb-12">
-          <h1
-            className="text-4xl sm:text-5xl md:text-6xl font-bold text-white mb-3 sm:mb-4 cursor-pointer hover:opacity-80 transition-opacity"
+          <div
+            className="flex items-center justify-center gap-3 sm:gap-4 mb-3 sm:mb-4 cursor-pointer hover:opacity-80 transition-opacity"
             onClick={() => {
               setSearched(false);
               setBrowseMode('search');
@@ -146,8 +145,15 @@ export default function Home() {
               setQuery('');
             }}
           >
-            Sub<span className="text-purple-400">Dir</span>
-          </h1>
+            <img
+              src="/logo.png"
+              alt="SubDir Logo"
+              className="w-12 h-12 sm:w-16 sm:h-16 md:w-20 md:h-20"
+            />
+            <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-white">
+              Sub<span className="text-purple-400">Dir</span>
+            </h1>
+          </div>
           <p className="text-base sm:text-lg md:text-xl text-gray-300 mb-2">
             {totalSubs === null
               ? 'A searchable directory of active subreddits'
@@ -313,9 +319,6 @@ export default function Home() {
             <span className="hidden sm:inline">Downloads include all </span>{totalSubs !== null ? `${totalSubs.toLocaleString()}+` : ''} active subreddits
           </p>
         </div>
-
-        {/* Mini Stats */}
-        {!searched && <MiniStats />}
 
         {/* Results */}
         {searched && (

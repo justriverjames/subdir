@@ -28,8 +28,8 @@ logger = logging.getLogger(__name__)
 class TieredScanner:
     """
     Two-tier archiver scanner.
-    Posts: Metadata + Posts + Media (fast, high priority)
-    Comments: Comments (slow, background)
+    Tier 1: Metadata + Posts + Media (fast, high priority)
+    Tier 2: Comments (slow, background)
     """
 
     def __init__(self, config: ArchiverConfig):
@@ -43,7 +43,7 @@ class TieredScanner:
         self.posts_processor = None
         self.comments_processor = None
 
-        self.last_comments_run = 0.0
+        self.last_tier2_run = 0.0
 
     async def initialize(self):
         logger.info("Initializing Two-Tier Reddit Archiver Scanner")
@@ -84,24 +84,24 @@ class TieredScanner:
             self.db.close()
 
         stats = self.rate_limiter.get_stats()
-        logger.info(f"Posts requests: {stats['posts']['requests']}")
-        logger.info(f"Comments requests: {stats['comments']['requests']}")
+        logger.info(f"Tier 1 requests: {stats['tier1']['requests']}")
+        logger.info(f"Tier 2 requests: {stats['tier2']['requests']}")
 
         anti_stats = self.anti_detection.get_stats()
         logger.info(f"Breaks taken: {anti_stats['break_count']}")
 
         logger.info("✓ Done")
 
-    async def process_posts(self, subreddit_name: str) -> bool:
+    async def process_tier1(self, subreddit_name: str) -> bool:
         """
-        Posts: Metadata → Posts + Media
+        Tier 1: Metadata → Posts + Media
         """
         logger.info("")
         logger.info("=" * 60)
-        logger.info(f"[POSTS] r/{subreddit_name}")
+        logger.info(f"[TIER 1] r/{subreddit_name}")
         logger.info("=" * 60)
 
-        self.db.update_processing_tier_status(subreddit_name, 'posts', 'processing')
+        self.db.update_tier_status(subreddit_name, 1, 'processing')
 
         # Phase 1: Metadata
         logger.info(f"[1/2] Fetching metadata")
@@ -110,7 +110,7 @@ class TieredScanner:
         success = await self.metadata_processor.process_subreddit(subreddit_name)
         if not success:
             logger.warning(f"Skipping r/{subreddit_name} - metadata fetch failed")
-            self.db.update_processing_tier_status(subreddit_name, 'posts', 'error')
+            self.db.update_tier_status(subreddit_name, 1, 'error')
             return False
 
         # Phase 2: Posts + Media URLs
@@ -122,33 +122,33 @@ class TieredScanner:
         if posts_count == 0:
             logger.warning(f"No posts found for r/{subreddit_name}")
 
-        # Mark posts complete
-        self.db.mark_posts_complete(subreddit_name)
-        self.db.update_processing_tier_activity('posts')
-        self.db.increment_processing_tier_processed('posts')
+        # Mark tier1 complete
+        self.db.mark_tier1_complete(subreddit_name)
+        self.db.update_tier_activity(1)
+        self.db.increment_tier_processed(1)
 
         logger.info("")
-        logger.info(f"✓ r/{subreddit_name} POSTS COMPLETE:")
+        logger.info(f"✓ r/{subreddit_name} TIER 1 COMPLETE:")
         logger.info(f"  - {posts_count:,} posts")
         logger.info(f"  - {media_count:,} media URLs")
         logger.info("")
 
         return True
 
-    async def process_comments_batch(self, batch_size: int = None) -> int:
+    async def process_tier2_batch(self, batch_size: int = None) -> int:
         """
-        Comments: Comments (batch processing)
+        Tier 2: Comments (batch processing)
         Fetches comments for a small batch of posts spread across multiple subreddits.
         """
         if batch_size is None:
-            batch_size = self.config.comments_batch_size
+            batch_size = self.config.tier2_batch_size
 
         logger.info("")
         logger.info("=" * 60)
-        logger.info(f"[COMMENTS] Processing comment batch (size: {batch_size})")
+        logger.info(f"[TIER 2] Processing comment batch (size: {batch_size})")
         logger.info("=" * 60)
 
-        posts = self.db.get_posts_for_comments_batch(
+        posts = self.db.get_posts_for_tier2_batch(
             limit=batch_size,
             spread_across_subs=True
         )
@@ -168,8 +168,8 @@ class TieredScanner:
 
             logger.info(f"[{i}/{len(posts)}] r/{subreddit}: {title[:50]}")
 
-            # Mark subreddit as comments processing if not already
-            self.db.update_processing_tier_status(subreddit, 'comments', 'processing')
+            # Mark subreddit as tier2 processing if not already
+            self.db.update_tier_status(subreddit, 2, 'processing')
 
             try:
                 count = await self.comments_processor.process_post(subreddit, post_id, title)
@@ -178,55 +178,55 @@ class TieredScanner:
                 # Update posts_pending_comments for this subreddit
                 self.db.update_posts_pending_comments(subreddit)
 
-                # Check if subreddit comments is complete
+                # Check if subreddit tier2 is complete
                 remaining = self.db.get_posts_for_comments(subreddit, limit=1)
                 if not remaining:
-                    self.db.mark_comments_complete(subreddit)
-                    logger.info(f"✓ r/{subreddit} comments complete")
+                    self.db.mark_tier2_complete(subreddit)
+                    logger.info(f"✓ r/{subreddit} tier2 complete")
 
             except Exception as e:
                 logger.error(f"Error fetching comments for {post_id}: {e}")
 
-            # Longer delay between posts for comments (anti-detection)
+            # Longer delay between posts for tier2 (anti-detection)
             if i < len(posts):
                 await self.anti_detection.random_delay(2.0, 5.0)
 
-        self.db.update_processing_tier_activity('comments')
-        self.db.increment_processing_tier_processed('comments', len(posts))
-        self.last_comments_run = time.time()
+        self.db.update_tier_activity(2)
+        self.db.increment_tier_processed(2, len(posts))
+        self.last_tier2_run = time.time()
 
         logger.info("")
-        logger.info(f"✓ COMMENTS BATCH COMPLETE: {comments_fetched:,} comments fetched")
+        logger.info(f"✓ TIER 2 BATCH COMPLETE: {comments_fetched:,} comments fetched")
         logger.info("")
 
         return comments_fetched
 
-    def should_run_comments(self) -> bool:
-        """Check if it's time to run a comments batch"""
-        if self.config.scanner_mode == 'posts':
+    def should_run_tier2(self) -> bool:
+        """Check if it's time to run a tier2 batch"""
+        if self.config.scanner_mode == 'tier1':
             return False
 
-        elapsed = time.time() - self.last_comments_run
-        return elapsed >= self.config.comments_cooldown
+        elapsed = time.time() - self.last_tier2_run
+        return elapsed >= self.config.tier2_cooldown
 
-    async def run_posts_only(self, limit: int = 50):
-        """Run posts processing only"""
-        logger.info("Mode: Posts Only (Posts + Media)")
+    async def run_tier1_only(self, limit: int = 50):
+        """Run tier1 processing only"""
+        logger.info("Mode: Tier 1 Only (Posts + Media)")
         logger.info("")
 
-        subreddits = self.db.get_subreddits_for_posts(
+        subreddits = self.db.get_subreddits_for_tier1(
             limit=limit,
             min_subscribers=self.config.min_subscribers
         )
 
         if not subreddits:
-            logger.info("No subreddits need posts processing")
+            logger.info("No subreddits need tier1 processing")
             return
 
         # Apply anti-detection shuffling
         subreddits = self.anti_detection.shuffle_with_bias(subreddits, 'subscribers')
 
-        logger.info(f"Found {len(subreddits)} subreddits for posts")
+        logger.info(f"Found {len(subreddits)} subreddits for tier1")
         logger.info("")
 
         processed = 0
@@ -241,7 +241,7 @@ class TieredScanner:
 
             try:
                 logger.info(f"[{i}/{len(subreddits)}] r/{sub['name']}")
-                success = await self.process_posts(sub['name'])
+                success = await self.process_tier1(sub['name'])
                 if success:
                     processed += 1
                 else:
@@ -265,15 +265,15 @@ class TieredScanner:
 
         logger.info("")
         logger.info("=" * 60)
-        logger.info("POSTS BATCH COMPLETE")
+        logger.info("TIER 1 BATCH COMPLETE")
         logger.info("=" * 60)
         logger.info(f"Processed: {processed}")
         logger.info(f"Failed: {failed}")
         logger.info("")
 
-    async def run_comments_only(self):
-        """Run comments processing only (comment backfill)"""
-        logger.info("Mode: Comments Only (Comments)")
+    async def run_tier2_only(self):
+        """Run tier2 processing only (comment backfill)"""
+        logger.info("Mode: Tier 2 Only (Comments)")
         logger.info("")
 
         while True:
@@ -284,35 +284,35 @@ class TieredScanner:
                 await asyncio.sleep(pause_remaining)
 
             # Process a batch
-            count = await self.process_comments_batch()
+            count = await self.process_tier2_batch()
 
             if count == 0:
                 logger.info("No more comments to fetch")
                 break
 
             # Cooldown before next batch
-            logger.info(f"Cooldown for {self.config.comments_cooldown:.0f}s before next batch...")
-            await asyncio.sleep(self.config.comments_cooldown)
+            logger.info(f"Cooldown for {self.config.tier2_cooldown:.0f}s before next batch...")
+            await asyncio.sleep(self.config.tier2_cooldown)
 
     async def run_both(self, limit: int = 50):
-        """Run interleaved posts and comments processing"""
+        """Run interleaved tier1 and tier2 processing"""
         logger.info("Mode: Both Tiers (Interleaved)")
         logger.info("")
 
-        subreddits = self.db.get_subreddits_for_posts(
+        subreddits = self.db.get_subreddits_for_tier1(
             limit=limit,
             min_subscribers=self.config.min_subscribers
         )
 
         if not subreddits:
-            logger.info("No subreddits need posts processing, switching to comments only")
-            await self.run_comments_only()
+            logger.info("No subreddits need tier1 processing, switching to tier2 only")
+            await self.run_tier2_only()
             return
 
         # Apply anti-detection shuffling
         subreddits = self.anti_detection.shuffle_with_bias(subreddits, 'subscribers')
 
-        logger.info(f"Found {len(subreddits)} subreddits for posts")
+        logger.info(f"Found {len(subreddits)} subreddits for tier1")
         logger.info("")
 
         processed = 0
@@ -325,18 +325,18 @@ class TieredScanner:
                 logger.info(f"Scanner paused for {pause_remaining}s")
                 await asyncio.sleep(pause_remaining)
 
-            # Posts processing
+            # Tier 1 processing
             try:
                 logger.info(f"[{i}/{len(subreddits)}] r/{sub['name']}")
-                success = await self.process_posts(sub['name'])
+                success = await self.process_tier1(sub['name'])
                 if success:
                     processed += 1
                 else:
                     failed += 1
 
-                # Check if should run comments batch
-                if self.should_run_comments():
-                    await self.process_comments_batch()
+                # Check if should run tier2 batch
+                if self.should_run_tier2():
+                    await self.process_tier2_batch()
 
                 # Anti-detection break
                 await self.anti_detection.maybe_take_break()
@@ -358,7 +358,7 @@ class TieredScanner:
         logger.info("=" * 60)
         logger.info("BATCH COMPLETE")
         logger.info("=" * 60)
-        logger.info(f"Posts processed: {processed}")
+        logger.info(f"Tier 1 processed: {processed}")
         logger.info(f"Failed: {failed}")
         logger.info("")
 
@@ -366,10 +366,10 @@ class TieredScanner:
         """Main entry point - dispatches based on mode"""
         mode = self.config.scanner_mode
 
-        if mode == 'posts':
-            await self.run_posts_only(limit)
-        elif mode == 'comments':
-            await self.run_comments_only()
+        if mode == 'tier1':
+            await self.run_tier1_only(limit)
+        elif mode == 'tier2':
+            await self.run_tier2_only()
         else:  # 'both'
             await self.run_both(limit)
 

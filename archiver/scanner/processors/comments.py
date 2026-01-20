@@ -30,6 +30,7 @@ class CommentsProcessor:
         self.reddit = reddit_client
         self.db = database
         self.config = config
+        self.progress_update_interval = 10  # Update progress every N posts
 
     async def process_post(self, subreddit_name: str, post_id: str, post_title: str) -> int:
         """
@@ -203,6 +204,19 @@ class CommentsProcessor:
                 'completed',
                 comment_count
             )
+
+            # Update progress in database every N posts
+            if i % self.progress_update_interval == 0 or i == len(posts):
+                self.db.update_processing_state(
+                    subreddit_name,
+                    'comments',
+                    {
+                        'current': i,
+                        'total': len(posts),
+                        'percent': round((i / len(posts)) * 100, 1),
+                        'comments_fetched': total_comments
+                    }
+                )
 
             # Progress log every 50 posts
             if i % 50 == 0:

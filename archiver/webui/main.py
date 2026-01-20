@@ -88,12 +88,19 @@ async def get_stats():
         """)
         recent = cursor.fetchall()
 
-        # Currently processing
+        # Currently processing (get all active subreddits with their progress)
         cursor.execute("""
-            SELECT name, current_phase, phase_progress
+            SELECT
+                s.name,
+                s.status,
+                ps.current_phase,
+                ps.phase_progress,
+                ps.updated_at
             FROM subreddits s
-            JOIN processing_state ps ON s.name = ps.subreddit
-            WHERE s.status = 'processing'
+            LEFT JOIN processing_state ps ON s.name = ps.subreddit
+            WHERE s.status IN ('active', 'processing')
+                AND ps.current_phase IS NOT NULL
+            ORDER BY ps.updated_at DESC
         """)
         processing = cursor.fetchall()
 
@@ -313,6 +320,190 @@ async def restart_scanner():
         return {"status": "success", "message": "Scanner restarted"}
     except docker.errors.NotFound:
         raise HTTPException(status_code=404, detail="Scanner container not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/queues")
+async def get_queue_stats():
+    """Get tier queue statistics"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Tier 1 stats
+        cursor.execute("""
+            SELECT COUNT(*) as posts_pending
+            FROM subreddits
+            WHERE posts_status = 'pending'
+        """)
+        posts_pending = cursor.fetchone()['posts_pending']
+
+        cursor.execute("""
+            SELECT name, posts_status
+            FROM subreddits
+            WHERE posts_status = 'processing'
+            LIMIT 1
+        """)
+        posts_current = cursor.fetchone()
+
+        # Tier 2 stats
+        cursor.execute("""
+            SELECT SUM(posts_pending_comments) as comments_pending
+            FROM subreddits
+            WHERE comments_status = 'pending' OR comments_status = 'processing'
+        """)
+        comments_pending = cursor.fetchone()['comments_pending'] or 0
+
+        cursor.execute("""
+            SELECT COUNT(*) as comments_subs
+            FROM subreddits
+            WHERE posts_pending_comments > 0
+        """)
+        comments_subs = cursor.fetchone()['comments_subs']
+
+        # Scanner state
+        cursor.execute("SELECT * FROM scanner_state WHERE id = 1")
+        scanner_state = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "posts": {
+                "pending": posts_pending,
+                "current": posts_current['name'] if posts_current else None
+            },
+            "comments": {
+                "pending_posts": comments_pending,
+                "total_subs": comments_subs
+            },
+            "scanner": {
+                "mode": scanner_state['active_mode'] if scanner_state else 'both',
+                "posts_budget": scanner_state['posts_rate_budget'] if scanner_state else 0.8,
+                "comments_budget": scanner_state['comments_rate_budget'] if scanner_state else 0.2
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/scanner/state")
+async def get_scanner_state():
+    """Get current scanner state"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM scanner_state WHERE id = 1")
+        state = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
+        if not state:
+            return {"exists": False}
+
+        return dict(state)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/scanner/mode")
+async def set_scanner_mode(mode: str):
+    """Set scanner mode (posts/comments/both)"""
+    if mode not in ('posts', 'comments', 'both'):
+        raise HTTPException(status_code=400, detail="Mode must be posts, comments, or both")
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE scanner_state
+            SET active_mode = %s,
+                updated_at = extract(epoch from now())::bigint
+            WHERE id = 1
+        """, (mode,))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return {"status": "success", "mode": mode}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/scanner/budget")
+async def set_rate_budget(posts: float, comments: float):
+    """Set rate budget allocation"""
+    if not (0.0 <= posts <= 1.0) or not (0.0 <= comments <= 1.0):
+        raise HTTPException(status_code=400, detail="Budgets must be between 0.0 and 1.0")
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE scanner_state
+            SET posts_rate_budget = %s,
+                comments_rate_budget = %s,
+                updated_at = extract(epoch from now())::bigint
+            WHERE id = 1
+        """, (posts, comments))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return {"status": "success", "posts": posts, "comments": comments}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/scanner/pause")
+async def pause_scanner(duration_minutes: int):
+    """Pause scanner for specified duration"""
+    if duration_minutes < 1 or duration_minutes > 1440:  # Max 24 hours
+        raise HTTPException(status_code=400, detail="Duration must be 1-1440 minutes")
+
+    try:
+        import time
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        pause_until = int(time.time()) + (duration_minutes * 60)
+
+        cursor.execute("""
+            UPDATE scanner_state
+            SET pause_until = %s,
+                updated_at = extract(epoch from now())::bigint
+            WHERE id = 1
+        """, (pause_until,))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return {"status": "success", "pause_until": pause_until, "duration_minutes": duration_minutes}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/scanner/resume")
+async def resume_scanner():
+    """Clear pause and resume scanner"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE scanner_state
+            SET pause_until = NULL,
+                updated_at = extract(epoch from now())::bigint
+            WHERE id = 1
+        """)
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

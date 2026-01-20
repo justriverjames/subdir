@@ -1,6 +1,6 @@
 # SubDir
 
-**A searchable directory of 67,000+ active subreddits** - metadata service for Reddit communities.
+**A searchable directory of over 140,000 active subreddits** - metadata service for Reddit communities.
 
 SubDir provides a clean, fast interface for discovering subreddits with full metadata including subscriber counts, descriptions, icons, NSFW flags, and more.
 
@@ -8,7 +8,7 @@ SubDir provides a clean, fast interface for discovering subreddits with full met
 
 ## Features
 
-- **67,000+ active subreddits** with full metadata
+- **140,000+ active subreddits** with full metadata
 - **Instant search** - no Reddit API calls needed, results up to 10k per query
 - **NSFW filtering** - toggle adult content on/off
 - **Rich metadata** - subscribers, descriptions, icons, colors, categories
@@ -60,7 +60,7 @@ See [scanner/README.md](scanner/README.md) for detailed documentation.
 
 ### 1. Web Frontend (Next.js + TypeScript)
 Modern search interface with:
-- Real-time search across 67,000+ active subreddits
+- Real-time search across 140,000+ active subreddits
 - Browse top 3000 (all/SFW/NSFW filtered)
 - NSFW content filtering toggle
 - Subreddit icons and branding colors
@@ -126,8 +126,6 @@ The Next.js app provides internal API routes:
 - No user profiles (u_*)
 - No deleted/banned/quarantined
 
-**Size:** 33MB SQLite database (67k active subreddits)
-
 ---
 
 ## Use Cases
@@ -162,7 +160,7 @@ subdir/
 │   └── lib/            # Database connection
 │
 ├── data/               # SQLite database (33MB)
-│   └── subreddit_scanner.db  # 67k active subreddits
+│   └── subreddit_scanner.db
 │
 ├── README.md           # This file
 ├── ROADMAP.md          # Development roadmap
@@ -230,7 +228,7 @@ See [ROADMAP.md](ROADMAP.md) for full development plans.
 
 **Current Status (Pre-v1.0):**
 - ✅ Database schema v4 (icons, colors, categories)
-- ✅ 67,000+ active subreddits scanned
+- ✅ 140,000+ active subreddits scanned
 - ✅ Web UI with search, browse, autocomplete
 - ✅ Performance optimizations (caching, WAL mode)
 - ✅ Smart scanner with retry logic and anti-detection
@@ -260,7 +258,7 @@ Built for the datahoarder and selfhosted communities. Contributions welcome!
 
 - **Frontend:** Next.js 16, TypeScript, Tailwind CSS
 - **Scanner:** Python 3.11+, httpx, SQLite, asyncio
-- **Database:** SQLite 3 with WAL mode (33MB, 67k active subreddits)
+- **Database:** SQLite 3 with WAL mode
 - **Deployment:** Debian 13 VPS + Nginx + Cloudflare
 - **Caching:** 5min ISR for stats, HTTP cache headers for CDN
 

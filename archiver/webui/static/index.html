@@ -389,8 +389,79 @@
         .modal-footer {
             display: flex;
             gap: 1rem;
-            justify-content: flex-end;
+            justify-end: flex-end;
             margin-top: 1.5rem;
+        }
+
+        .progress-section {
+            margin-bottom: 2rem;
+        }
+
+        .progress-section h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            color: #e0e0e0;
+        }
+
+        .progress-card {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .progress-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #e0e0e0;
+        }
+
+        .progress-phase {
+            font-size: 0.875rem;
+            color: #888;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 24px;
+            background: #0a0a0a;
+            border-radius: 12px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #ff6b35 0%, #ff8c5a 100%);
+            transition: width 0.3s ease;
+            border-radius: 12px;
+        }
+
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: #e0e0e0;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+        }
+
+        .progress-details {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+            color: #888;
         }
     </style>
 </head>
@@ -421,6 +492,82 @@
                 <button class="btn-secondary" onclick="stopScanner()">Stop Scanner</button>
                 <button class="btn-secondary" onclick="restartScanner()">Restart Scanner</button>
                 <button class="btn-secondary" onclick="refreshDashboard()">Refresh</button>
+            </div>
+
+            <!-- Scanner Mode & Controls -->
+            <div class="scanner-controls" style="margin: 2rem 0; padding: 1.5rem; background: #1a1a1a; border-radius: 8px;">
+                <h2 style="margin-bottom: 1rem; font-size: 1.25rem;">Scanner Controls</h2>
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
+                    <div style="flex: 1; min-width: 200px;">
+                        <label style="display: block; margin-bottom: 0.5rem; color: #999;">Mode</label>
+                        <select id="scanner-mode" style="width: 100%; padding: 0.5rem; background: #0f0f0f; border: 1px solid #333; border-radius: 4px; color: #fff;">
+                            <option value="both">Both (Posts + Comments)</option>
+                            <option value="posts">Posts Only</option>
+                            <option value="comments">Comments Only</option>
+                        </select>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; align-items: flex-end;">
+                        <button class="btn-secondary" onclick="updateMode()" style="margin: 0;">Apply Mode</button>
+                    </div>
+                    <div style="flex: 1; min-width: 200px;">
+                        <label style="display: block; margin-bottom: 0.5rem; color: #999;">Pause Scanner</label>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <button class="btn-secondary" onclick="pauseScanner(5)" style="margin: 0;">5 min</button>
+                            <button class="btn-secondary" onclick="pauseScanner(15)" style="margin: 0;">15 min</button>
+                            <button class="btn-secondary" onclick="pauseScanner(60)" style="margin: 0;">1 hour</button>
+                            <button class="btn-primary" onclick="resumeScanner()" style="margin: 0;">Resume</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Processing Queues -->
+            <div class="queues-section" style="margin: 2rem 0;">
+                <h2 style="margin-bottom: 1rem; font-size: 1.25rem;">Processing Queues</h2>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
+                    <!-- Posts Queue -->
+                    <div class="queue-card" style="background: #1a1a1a; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #ff6b35;">
+                        <h3 style="margin-bottom: 1rem; color: #ff6b35; font-size: 1.1rem;">Posts & Media</h3>
+                        <div class="queue-stats" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #999;">Pending:</span>
+                                <span style="color: #fff; font-weight: 600;" id="posts-pending">0</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #999;">Processing:</span>
+                                <span style="color: #fff; font-weight: 600;" id="posts-current">--</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #999;">Budget:</span>
+                                <span style="color: #fff; font-weight: 600;" id="posts-budget">80%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Comments Queue -->
+                    <div class="queue-card" style="background: #1a1a1a; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #4CAF50;">
+                        <h3 style="margin-bottom: 1rem; color: #4CAF50; font-size: 1.1rem;">Comments (Background)</h3>
+                        <div class="queue-stats" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #999;">Posts Pending:</span>
+                                <span style="color: #fff; font-weight: 600;" id="comments-pending">0</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #999;">Subreddits:</span>
+                                <span style="color: #fff; font-weight: 600;" id="comments-subs">0</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #999;">Budget:</span>
+                                <span style="color: #fff; font-weight: 600;" id="comments-budget">20%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Processing Progress Section -->
+            <div class="progress-section" id="progress-section" style="display: none;">
+                <h2>Currently Processing</h2>
+                <div id="progress-cards"></div>
             </div>
 
             <div class="stats-grid">
@@ -644,6 +791,48 @@
                 document.getElementById('stat-media').textContent = formatNumber(data.stats.total_media_urls);
                 document.getElementById('stat-processing').textContent = formatNumber(data.stats.processing_subreddits);
 
+                // Render progress cards
+                const progressSection = document.getElementById('progress-section');
+                const progressCards = document.getElementById('progress-cards');
+
+                if (data.currently_processing && data.currently_processing.length > 0) {
+                    progressSection.style.display = 'block';
+                    progressCards.innerHTML = data.currently_processing.map(proc => {
+                        const progress = proc.phase_progress || {};
+                        const percent = progress.percent || 0;
+                        const current = progress.current || 0;
+                        const total = progress.total || 0;
+                        const step = progress.step || '';
+                        const commentsFetched = progress.comments_fetched || 0;
+
+                        let phaseText = proc.current_phase || 'processing';
+                        if (proc.current_phase === 'posts' && step) {
+                            phaseText = `posts (${step})`;
+                        } else if (proc.current_phase === 'comments' && commentsFetched > 0) {
+                            phaseText = `comments (${formatNumber(commentsFetched)} fetched)`;
+                        }
+
+                        return `
+                            <div class="progress-card">
+                                <div class="progress-header">
+                                    <div class="progress-title">r/${proc.name}</div>
+                                    <div class="progress-phase">${phaseText}</div>
+                                </div>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar" style="width: ${percent}%"></div>
+                                    <div class="progress-text">${percent.toFixed(1)}%</div>
+                                </div>
+                                <div class="progress-details">
+                                    <span>${formatNumber(current)} / ${formatNumber(total)}</span>
+                                    <span>${proc.current_phase === 'comments' ? 'posts processed' : ''}</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                } else {
+                    progressSection.style.display = 'none';
+                }
+
                 const tbody = document.getElementById('recent-activity');
                 if (data.recent_activity.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No activity yet</td></tr>';
@@ -660,9 +849,93 @@
                 }
 
                 document.getElementById('last-updated').textContent = new Date().toLocaleTimeString();
+
+                // Also refresh queues
+                await refreshQueues();
             } catch (e) {
                 console.error('Error refreshing dashboard:', e);
             }
+        }
+
+        async function refreshQueues() {
+            try {
+                const res = await fetch('/api/queues');
+                const data = await res.json();
+
+                // Update posts queue
+                document.getElementById('posts-pending').textContent = formatNumber(data.posts.pending);
+                document.getElementById('posts-current').textContent = data.posts.current || '--';
+                document.getElementById('posts-budget').textContent = (data.scanner.posts_budget * 100).toFixed(0) + '%';
+
+                // Update comments queue
+                document.getElementById('comments-pending').textContent = formatNumber(data.comments.pending_posts);
+                document.getElementById('comments-subs').textContent = formatNumber(data.comments.total_subs);
+                document.getElementById('comments-budget').textContent = (data.scanner.comments_budget * 100).toFixed(0) + '%';
+
+                // Update mode selector
+                document.getElementById('scanner-mode').value = data.scanner.mode || 'both';
+            } catch (e) {
+                console.error('Error refreshing queues:', e);
+            }
+        }
+
+        async function updateMode() {
+            const mode = document.getElementById('scanner-mode').value;
+            try {
+                const res = await fetch('/api/scanner/mode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showNotification(`Scanner mode updated to: ${mode}`, 'success');
+                    await refreshQueues();
+                } else {
+                    showNotification('Failed to update mode', 'error');
+                }
+            } catch (e) {
+                showNotification('Error updating mode: ' + e.message, 'error');
+            }
+        }
+
+        async function pauseScanner(minutes) {
+            try {
+                const res = await fetch('/api/scanner/pause', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ duration_minutes: minutes })
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showNotification(`Scanner paused for ${minutes} minutes`, 'success');
+                } else {
+                    showNotification('Failed to pause scanner', 'error');
+                }
+            } catch (e) {
+                showNotification('Error pausing scanner: ' + e.message, 'error');
+            }
+        }
+
+        async function resumeScanner() {
+            try {
+                const res = await fetch('/api/scanner/resume', {
+                    method: 'POST'
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    showNotification('Scanner resumed', 'success');
+                } else {
+                    showNotification('Failed to resume scanner', 'error');
+                }
+            } catch (e) {
+                showNotification('Error resuming scanner: ' + e.message, 'error');
+            }
+        }
+
+        function showNotification(message, type) {
+            // Simple notification - could be improved with a toast library
+            alert(message);
         }
 
         // Subreddits
