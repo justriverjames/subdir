@@ -71,6 +71,44 @@ class Database:
                 )
                 return cur.fetchone() is not None
 
+    def upsert_subreddit(self, name: str, priority: int, subscribers: int = None) -> tuple[bool, bool]:
+        """
+        Insert or update subreddit from scanner database sync.
+        Preserves processing state if already exists.
+        Returns (was_new, was_updated)
+        """
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                # Try insert first
+                cur.execute(
+                    """
+                    INSERT INTO subreddits (name, priority, subscribers, first_seen_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (name) DO NOTHING
+                    RETURNING name
+                    """,
+                    (name.lower(), priority, subscribers, int(time.time()))
+                )
+
+                if cur.fetchone() is not None:
+                    return (True, False)  # New insert
+
+                # Already exists, update metadata only (preserve processing state)
+                cur.execute(
+                    """
+                    UPDATE subreddits
+                    SET subscribers = %s,
+                        priority = %s
+                    WHERE name = %s
+                        AND posts_status = 'pending'
+                    RETURNING name
+                    """,
+                    (subscribers, priority, name.lower())
+                )
+
+                was_updated = cur.fetchone() is not None
+                return (False, was_updated)  # Not new, possibly updated
+
     def update_subreddit_metadata(self, name: str, metadata: Dict[str, Any]):
         """Update subreddit metadata after fetch"""
         with self.get_connection() as conn:
@@ -555,6 +593,19 @@ class Database:
                     """,
                     (int(time.time()), subreddit)
                 )
+
+    def set_all_comments_deferred(self):
+        """Set all subreddits comments_status to 'deferred' for threads-only mode"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE subreddits
+                    SET comments_status = 'deferred'
+                    WHERE comments_status IN ('pending', 'processing')
+                    """
+                )
+                logger.info(f"Set {cur.rowcount} subreddits to comments_status='deferred'")
 
     def update_processing_tier_status(self, subreddit: str, tier: str, status: str):
         """Update tier status (pending, processing, completed, error). Tier is 'posts' or 'comments'."""

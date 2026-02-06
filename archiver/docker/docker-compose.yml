@@ -50,6 +50,7 @@ services:
       REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET}
       REDDIT_USERNAME: ${REDDIT_USERNAME}
       REDDIT_PASSWORD: ${REDDIT_PASSWORD}
+      USER_AGENT: ${USER_AGENT}
       # PostgreSQL (override for Docker network)
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -67,7 +68,7 @@ services:
       REQUESTS_PER_10_SECONDS: ${REQUESTS_PER_10_SECONDS:-10}
       REQUESTS_PER_SECOND: ${REQUESTS_PER_SECOND:-2}
       # Two-tier processing
-      SCANNER_MODE: ${SCANNER_MODE:-both}
+      SCANNER_MODE: ${SCANNER_MODE:-threads}
       POSTS_WEIGHT: ${POSTS_WEIGHT:-0.8}
       COMMENTS_WEIGHT: ${COMMENTS_WEIGHT:-0.2}
       COMMENTS_BATCH_SIZE: ${COMMENTS_BATCH_SIZE:-5}
@@ -86,9 +87,9 @@ services:
       SUBREDDIT_PAUSE_MAX: ${SUBREDDIT_PAUSE_MAX:-60}
     volumes:
       - subdir-archiver-scanner-logs:/app/logs
-      # Optional: mount your subdir data directory for import
-      # Uncomment and adjust path as needed:
-      # - /Users/river/code/justriverjames/subdir/data:/app/data:ro
+      # Mount scanner database and priority CSV
+      - /Users/river/code/justriverjames/subdir/data:/app/data:ro
+      - ../priority_subreddits.csv:/app/priority_subreddits.csv:ro
 
   webui:
     build:

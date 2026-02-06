@@ -23,4 +23,6 @@ RUN mkdir -p /app/logs
 
 WORKDIR /app/scanner
 
-CMD ["python", "main.py"]
+# Default command: run scanner
+# Can be overridden with: docker-compose run scanner python main.py <command>
+CMD ["python", "main.py", "run", "--limit", "50"]

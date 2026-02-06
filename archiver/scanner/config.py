@@ -54,8 +54,8 @@ class ArchiverConfig:
     max_consecutive_403: int = 5
     max_total_429: int = 2
 
-    # Two-tier processing
-    scanner_mode: str = 'both'  # posts, comments, both
+    # Two-tier processing (toggle between threads or comments, not both)
+    scanner_mode: str = 'threads'  # threads, comments
     posts_weight: float = 0.8
     comments_weight: float = 0.2
     comments_batch_size: int = 5
@@ -127,7 +127,7 @@ class ArchiverConfig:
             subreddit_pause_max=float(os.getenv('SUBREDDIT_PAUSE_MAX', '60.0')),
 
             # Two-tier processing
-            scanner_mode=os.getenv('SCANNER_MODE', 'both'),
+            scanner_mode=os.getenv('SCANNER_MODE', 'threads'),
             posts_weight=float(os.getenv('POSTS_WEIGHT', '0.8')),
             comments_weight=float(os.getenv('COMMENTS_WEIGHT', '0.2')),
             comments_batch_size=int(os.getenv('COMMENTS_BATCH_SIZE', '5')),
@@ -179,8 +179,8 @@ class ArchiverConfig:
             errors.append("max_posts_per_subreddit too high (max 2000 for top+hot)")
 
         # Two-tier settings
-        if self.scanner_mode not in ('posts', 'comments', 'both'):
-            errors.append("scanner_mode must be 'posts', 'comments', or 'both'")
+        if self.scanner_mode not in ('threads', 'comments'):
+            errors.append("scanner_mode must be 'threads' or 'comments'")
 
         if not (0.0 <= self.posts_weight <= 1.0):
             errors.append("posts_weight must be between 0.0 and 1.0")

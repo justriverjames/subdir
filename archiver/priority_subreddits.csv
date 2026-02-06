@@ -1,0 +1,304 @@
+subreddit,category,priority,nsfw,reason
+datahoarder,preservation,5,false,Core digital archival community and techniques
+opendirectories,preservation,5,false,Open directory listings for archival
+archiveteam,preservation,5,false,Dedicated to saving digital heritage
+selfhosted,preservation,4,false,Self-hosting services without cloud dependence
+homelab,preservation,4,false,Home server and infrastructure knowledge
+sysadmin,preservation,4,false,System administration expertise
+datacurator,preservation,3,false,Data organization and curation practices
+piracy,preservation,3,false,Archival techniques and preservation methods
+torrents,preservation,3,false,Distributed file sharing knowledge
+seedboxes,preservation,2,false,Remote archival infrastructure
+trackers,preservation,2,false,Private tracker knowledge and access
+privacytoolsio,preservation,4,false,Privacy tools and self-hosted alternatives
+netsec,preservation,3,false,Network security and privacy
+survival,survival,5,false,Essential wilderness survival knowledge and skills
+Bushcraft,survival,5,false,Primitive skills and wilderness living
+Survivalist,survival,4,false,Long-term survival strategies
+WildernessBackpacking,survival,4,false,Extended wilderness travel and camping
+UrbanSurvival,survival,4,false,Urban disaster survival techniques
+ultralight,survival,3,false,Minimalist outdoor gear and techniques
+camping,survival,3,false,General camping knowledge and tips
+hiking,survival,3,false,Trail knowledge and hiking techniques
+foraging,survival,5,false,Wild food identification and harvesting
+wildernesssurvival,survival,4,false,Wilderness emergency situations
+PrimitiveTechnology,survival,5,false,Building from scratch with natural materials
+Bowyer,survival,3,false,Bow making and archery crafting
+flintknapping,survival,3,false,Stone tool creation techniques
+cordage,survival,2,false,Rope and fiber crafting
+trapping,survival,3,false,Animal trapping techniques
+hunting,survival,4,false,Hunting skills and game processing
+SurvivalSkills,survival,4,false,Comprehensive survival techniques
+SurvivalHacking,survival,3,false,Creative survival solutions
+UrbanForaging,survival,3,false,Finding food in urban environments
+preppers,prepping,5,false,Emergency preparedness fundamentals
+prepping,prepping,4,false,General prepping community
+PrepperIntel,prepping,4,false,Current events analysis for preparedness
+bugout,prepping,4,false,Emergency evacuation planning and gear
+bugoutbags,prepping,3,false,Bug out bag contents and planning
+VEDC,prepping,3,false,Vehicle emergency kits and planning
+EDC,prepping,4,false,Everyday carry items and philosophy
+SHTF,prepping,4,false,Shit hits the fan scenarios and planning
+OffGrid,prepping,5,false,Living without grid dependence
+OffGridLiving,prepping,4,false,Practical off-grid lifestyle
+collapse,prepping,4,false,Societal collapse analysis and preparation
+PostCollapse,prepping,3,false,Post-collapse survival scenarios
+PostApocalyptic,prepping,2,false,Long-term post-disaster scenarios
+resilience,prepping,3,false,Building resilient systems and communities
+sustainability,prepping,4,false,Sustainable living practices
+Frugal,prepping,3,false,Low-cost living and resource conservation
+selfreliance,prepping,4,false,Complete independence and self-reliance
+gridDown,prepping,3,false,Grid-down scenarios and preparation
+opsec,prepping,3,false,Operational security practices
+SurvivalGear,prepping,3,false,Emergency equipment and tools
+Homesteading,homesteading,5,false,Comprehensive homesteading lifestyle
+homestead,homesteading,5,false,Homesteading community and advice
+BackyardChickens,homesteading,4,false,Chicken raising and care
+BackyardOrchard,homesteading,3,false,Fruit tree cultivation
+beekeeping,homesteading,4,false,Beekeeping and honey production
+goats,homesteading,3,false,Goat raising and dairy production
+rabbits,homesteading,3,false,Rabbit raising for meat and fiber
+livestock,homesteading,3,false,General livestock management
+poultry,homesteading,3,false,Poultry raising and care
+Permaculture,homesteading,5,false,Permanent agriculture design
+permies,homesteading,3,false,Permaculture community discussion
+aquaponics,homesteading,4,false,Combined fish and plant cultivation
+NoTillGardening,homesteading,3,false,Soil-preserving agriculture
+OrganicGardening,homesteading,4,false,Chemical-free growing methods
+SelfSufficiency,homesteading,5,false,Complete self-reliance strategies
+SmallFarming,homesteading,4,false,Small-scale farming operations
+UrbanHomestead,homesteading,3,false,City-based self-sufficiency
+UrbanGardening,homesteading,3,false,Urban food production
+urbanfarming,homesteading,3,false,Farming in urban environments
+SustainableFarming,homesteading,3,false,Environmentally sound agriculture
+FoodForest,homesteading,3,false,Edible perennial landscapes
+companion_planting,homesteading,2,false,Strategic crop placement
+MasterGardener,homesteading,3,false,Advanced gardening knowledge
+gardening,food,5,false,General gardening knowledge and techniques
+vegetablegardening,food,5,false,Vegetable cultivation and production
+IndoorGarden,food,3,false,Indoor growing systems
+composting,food,4,false,Composting and soil building
+seedstarting,food,3,false,Starting plants from seed
+raisedbeds,food,3,false,Raised bed gardening techniques
+fruit,food,3,false,Fruit growing and cultivation
+HotPeppers,food,2,false,Pepper cultivation
+mycology,food,4,false,Mushroom science and cultivation
+MushroomGrowers,food,4,false,Mushroom growing techniques
+wildcrafting,food,3,false,Wild plant harvesting and use
+Canning,food,5,false,Food preservation through canning
+fermentation,food,5,false,Fermented foods and preservation
+pickling,food,4,false,Pickling and preservation
+foodpreservation,food,5,false,General food preservation techniques
+foodstorage,food,4,false,Long-term food storage
+Charcuterie,food,3,false,Meat curing and preservation
+cheesemaking,food,3,false,Cheese making techniques
+Kombucha,food,2,false,Kombucha brewing
+Breadit,food,4,false,Bread baking techniques
+Sourdough,food,4,false,Sourdough cultivation and baking
+baking,food,3,false,General baking techniques
+FoodPrepping,food,4,false,Food preparation and storage
+MealPrepSunday,food,3,false,Batch cooking and meal planning
+dehydrating,food,4,false,Food dehydration and preservation
+cheapmeals,food,3,false,Budget-friendly meal preparation
+recipes,food,3,false,Recipe collection and sharing
+cooking,food,3,false,General cooking techniques
+cookingforbeginners,food,2,false,Basic cooking skills
+brewing,food,3,false,Beer and beverage brewing
+DIY,diy,5,false,General do-it-yourself projects and repairs
+HomeImprovement,diy,5,false,Home repair and renovation
+fixit,diy,5,false,Repair guidance for common items
+howto,diy,4,false,Step-by-step instructional guides
+learnusefulskills,diy,4,false,Practical skill learning
+lifehacks,diy,2,false,Life improvement shortcuts
+diyprojects,diy,3,false,Project ideas and tutorials
+Tools,diy,4,false,Tool knowledge and recommendations
+handtools,diy,3,false,Non-powered tool techniques
+woodworking,diy,5,false,Woodcraft and carpentry
+carpentry,diy,4,false,Carpentry and construction
+metalworking,diy,4,false,Metal fabrication and forging
+welding,diy,4,false,Welding techniques and equipment
+Blacksmith,diy,3,false,Traditional blacksmithing
+Leathercraft,diy,3,false,Leather working and repair
+knifemaking,diy,3,false,Knife crafting and forging
+sewing,diy,4,false,Sewing and fabric repair
+knitting,diy,2,false,Knitting and fiber arts
+crafts,diy,2,false,General crafting techniques
+upcycling,diy,3,false,Repurposing materials
+repurposing,diy,3,false,Creative reuse of materials
+Repairs,diy,4,false,General repair knowledge
+ZeroWaste,diy,3,false,Waste reduction and reuse
+maker,diy,3,false,Maker movement and projects
+homemadeworkshop,diy,2,false,Workshop setup and projects
+tinyhouses,diy,3,false,Tiny house construction and living
+tinyhouse,diy,3,false,Tiny house community
+vanlife,diy,3,false,Van conversion and mobile living
+solarpunk,diy,2,false,Sustainable technology and design
+AskElectronics,technical,5,false,Electronics troubleshooting and design
+electronics,technical,5,false,General electronics knowledge
+electrical,technical,4,false,Electrical systems and wiring
+askelectricians,technical,3,false,Electrical advice and troubleshooting
+plumbing,technical,4,false,Plumbing systems and repair
+arduino,technical,4,false,Arduino programming and projects
+raspberry_pi,technical,4,false,Raspberry Pi computing projects
+homeautomation,technical,3,false,Smart home and automation
+robotics,technical,3,false,Robot building and programming
+3Dprinting,technical,4,false,Additive manufacturing
+CNC,technical,3,false,Computer-controlled machining
+lasercutting,technical,2,false,Laser cutting and engraving
+ChemicalEngineering,technical,3,false,Chemical engineering principles
+MechanicalEngineering,technical,4,false,Mechanical engineering knowledge
+engineering,technical,4,false,General engineering knowledge
+AskEngineers,technical,5,false,Engineering problem solving
+EngineeringStudents,technical,3,false,Engineering education resources
+AutoMechanics,technical,5,false,Vehicle repair and maintenance
+Justrolledintotheshop,technical,3,false,Automotive repair cases and learning
+Machinists,technical,4,false,Machining techniques and equipment
+machining,technical,4,false,Precision machining
+Manufacturing,technical,3,false,Manufacturing processes
+fabrication,technical,3,false,Metal fabrication
+Amateur_Radio,technical,4,false,Radio communication and emergency comms
+hamradio,technical,4,false,Ham radio operation and community
+rfelectronics,technical,3,false,RF circuit design and troubleshooting
+buildapc,technical,3,false,PC building and hardware
+AskDocs,medical,4,false,Medical advice and information
+medical,medical,3,false,General medical knowledge
+medicine,medical,3,false,Medical science and practice
+EmergencyMedicine,medical,4,false,Emergency medical procedures
+ems,medical,4,false,Emergency medical services
+prehospital,medical,3,false,Pre-hospital emergency care
+Dentistry,medical,2,false,Dental health and procedures
+herbalism,medical,3,false,Medicinal plant knowledge
+naturalremedies,medical,2,false,Alternative medicine approaches
+FirstAid,medical,5,false,Emergency first aid procedures
+WildernessFirstAid,medical,5,false,Remote medical emergencies
+wildernessmedicine,medical,5,false,Wilderness medical care
+AustereMedicine,medical,4,false,Limited-resource medical care
+SurvivalMedicine,medical,4,false,Medical care in survival situations
+pharmacology,medical,3,false,Drug knowledge and interactions
+supplements,medical,2,false,Nutritional supplements
+medicalschool,medical,2,false,Medical education and training
+nutrition,medical,3,false,Nutritional science and diet
+fitness,medical,3,false,Physical fitness and exercise
+bodyweightfitness,medical,3,false,Exercise without equipment
+solar,energy,5,false,Solar power systems and installation
+solarenergy,energy,4,false,Solar energy technology
+OffGridCabins,energy,4,false,Off-grid cabin living
+wind,energy,3,false,Wind power generation
+Hydroponics,energy,3,false,Soilless growing systems
+alternativeenergy,energy,4,false,Renewable energy sources
+RenewableEnergy,energy,4,false,Sustainable energy systems
+batteries,energy,4,false,Battery technology and storage
+energy,energy,3,false,General energy topics
+climate,energy,3,false,Climate science and impacts
+environment,energy,3,false,Environmental science and conservation
+AskScience,education,5,false,Scientific explanation and knowledge
+askscience,education,5,false,Science questions and answers
+science,education,5,false,General scientific discussion
+explainlikeimfive,education,5,false,Complex topics simplified
+todayilearned,education,4,false,Interesting facts and knowledge
+YouShouldKnow,education,4,false,Useful information and tips
+LifeProTips,education,3,false,Life improvement advice
+coolguides,education,4,false,Visual guides and references
+educationalgifs,education,3,false,Learning through animation
+Documentaries,education,4,false,Documentary film resources
+lectures,education,3,false,Educational lectures and talks
+OpenCourseware,education,4,false,Free educational courses
+UniversityofReddit,education,3,false,Community-taught courses
+learnprogramming,education,4,false,Programming education
+IWantToLearn,education,4,false,Learning new skills community
+AskHistorians,education,5,false,Historical knowledge and context
+history,education,4,false,Historical discussion and learning
+ancienthistory,education,3,false,Ancient civilizations and periods
+worldhistory,education,3,false,Global historical perspectives
+chemistry,education,4,false,Chemistry knowledge and experiments
+physics,education,4,false,Physics principles and applications
+biology,education,4,false,Biological sciences
+space,education,3,false,Space exploration and astronomy
+astronomy,education,3,false,Astronomy and celestial observation
+earthsciences,education,3,false,Earth science and geology
+geology,education,3,false,Geological sciences
+psychology,education,3,false,Psychology and human behavior
+neuroscience,education,3,false,Brain science and neurology
+genetics,education,3,false,Genetics and heredity
+microbiology,education,3,false,Microbiology and microorganisms
+ecology,education,3,false,Ecological systems and relationships
+dataisbeautiful,education,3,false,Data visualization and analysis
+technology,education,3,false,Technology news and discussion
+futurology,education,2,false,Future technology and trends
+math,education,4,false,Mathematics knowledge and problem-solving
+statistics,education,3,false,Statistical analysis and methods
+askphilosophy,education,3,false,Philosophical questions and discussion
+askanthropology,education,3,false,Anthropological knowledge
+geography,education,3,false,Geographic knowledge and analysis
+maps,education,3,false,Maps and cartography
+oldmaps,education,2,false,Historical maps and cartography
+books,education,3,false,Book recommendations and discussion
+suggestmeabook,education,2,false,Book recommendations
+DepthHub,education,4,false,In-depth discussions and analysis
+TrueReddit,education,3,false,Thoughtful discussion and articles
+interestingasfuck,education,2,false,Fascinating content and facts
+productivity,education,3,false,Productivity techniques and tools
+getdisciplined,education,3,false,Self-discipline and habit building
+simpleliving,education,3,false,Minimalist lifestyle
+minimalism,education,2,false,Minimalist philosophy and practice
+changemyview,education,3,false,Perspective-changing discussions
+Firearms,skills,3,false,Firearm knowledge and safety
+reloading,skills,3,false,Ammunition reloading
+knives,skills,3,false,Knife knowledge and maintenance
+Archery,skills,2,false,Archery and bow shooting
+martialarts,skills,2,false,Self-defense and martial arts
+water,skills,3,false,Water purification and management
+privacy,skills,3,false,Privacy protection and anonymity
+gonewild,nsfw-amateur,4,true,Amateur self-posted content
+RealGirls,nsfw-amateur,4,true,Real amateur photos and content
+gonewildplus,nsfw-amateur,3,true,Plus-size amateur content
+gonewildcurvy,nsfw-amateur,3,true,Curvy amateur content
+gonewildcouples,nsfw-amateur,3,true,Couple amateur content
+altgonewild,nsfw-amateur,3,true,Alternative style amateur content
+cosplaygirls,nsfw-amateur,2,true,Cosplay adult content
+holdthemoan,nsfw-amateur,3,true,Public/risky amateur content
+randomsexiness,nsfw-amateur,2,true,Random sexy content
+NSFW_Snapchat,nsfw-amateur,2,true,Snapchat adult content
+OnlyFans,nsfw-amateur,2,true,OnlyFans content aggregation
+BigBoobs,nsfw-body,3,true,Large breast content
+boobs,nsfw-body,3,true,Breast content
+tits,nsfw-body,3,true,Breast content
+ass,nsfw-body,4,true,Buttocks content
+bigass,nsfw-body,3,true,Large buttocks content
+pussy,nsfw-body,3,true,Explicit genital content
+thick,nsfw-body,3,true,Thick body type content
+bbw,nsfw-body,3,true,Big beautiful women content
+curvy,nsfw-body,3,true,Curvy body type content
+milf,nsfw-body,3,true,Mature women content
+redheads,nsfw-body,2,true,Redhead content
+AsianGoneWild,nsfw-body,3,true,Asian amateur content
+Latinas,nsfw-body,3,true,Latina content
+IndianBabes,nsfw-body,2,true,Indian/South Asian content
+dadsgonewild,nsfw-body,2,true,Male amateur content
+ladybonersgw,nsfw-body,2,true,Male amateur content
+gaybrosgonewild,nsfw-body,2,true,Gay male amateur content
+bdsm,nsfw-kink,3,true,BDSM and kink content
+bondage,nsfw-kink,3,true,Bondage content
+malebondage,nsfw-kink,2,true,Male bondage content
+NSFW_GIF,nsfw-media,4,true,Adult animated GIFs
+NSFW_GIFs,nsfw-media,3,true,Adult GIF content
+porn_gifs,nsfw-media,3,true,Pornographic GIFs
+60fpsporn,nsfw-media,3,true,High framerate adult content
+porn,nsfw-media,4,true,General pornographic content
+pornstars,nsfw-media,3,true,Professional adult performers
+celebnsfw,nsfw-media,2,true,Celebrity NSFW content
+rule34,nsfw-media,3,true,Fictional character adult content
+hentai,nsfw-media,3,true,Japanese adult animation
+ecchi,nsfw-media,2,true,Softcore anime content
+lesbians,nsfw-media,3,true,Lesbian content
+lesbian,nsfw-media,3,true,Lesbian content
+gayporn,nsfw-media,3,true,Gay male content
+sexpositions,nsfw-media,2,true,Sexual position guides
+gonewildstories,nsfw-stories,4,true,Amateur erotic stories
+sexstories,nsfw-stories,3,true,Erotic fiction
+erotica,nsfw-stories,3,true,Erotic literature
+eroticliterature,nsfw-stories,3,true,Erotic writing
+gonewildaudio,nsfw-stories,3,true,Erotic audio content
+sex,nsfw-stories,4,true,Sex discussion and advice
+NSFW_Tributes,nsfw-stories,2,true,Tribute content
+NSFW_Wallpapers,nsfw-media,2,true,Adult wallpapers

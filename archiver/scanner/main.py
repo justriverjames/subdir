@@ -3,12 +3,14 @@ import logging
 import sys
 import random
 import time
+import argparse
+import sqlite3
 from pathlib import Path
 
 from config import ArchiverConfig
 from database import Database
 from reddit_client import RedditAPIClient
-from rate_limiter import TieredRateLimiter, AntiDetection
+from rate_limiter import ConservativeRateLimiter, AntiDetection
 from processors.metadata import MetadataProcessor
 from processors.posts import PostsProcessor
 from processors.comments import CommentsProcessor
@@ -57,7 +59,7 @@ class TieredScanner:
 
         logger.info("✓ Database connected")
 
-        self.rate_limiter = TieredRateLimiter(self.config)
+        self.rate_limiter = ConservativeRateLimiter(self.config)
         self.anti_detection = AntiDetection(self.config)
 
         self.reddit = RedditAPIClient(self.config, self.rate_limiter)
@@ -84,8 +86,8 @@ class TieredScanner:
             self.db.close()
 
         stats = self.rate_limiter.get_stats()
-        logger.info(f"Posts requests: {stats['posts']['requests']}")
-        logger.info(f"Comments requests: {stats['comments']['requests']}")
+        logger.info(f"Total requests: {stats['total_requests']}")
+        logger.info(f"Total wait time: {stats['total_wait_time']:.1f}s")
 
         anti_stats = self.anti_detection.get_stats()
         logger.info(f"Breaks taken: {anti_stats['break_count']}")
@@ -203,16 +205,19 @@ class TieredScanner:
 
     def should_run_comments(self) -> bool:
         """Check if it's time to run a comments batch"""
-        if self.config.scanner_mode == 'posts':
+        if self.config.scanner_mode == 'threads':
             return False
 
         elapsed = time.time() - self.last_comments_run
         return elapsed >= self.config.comments_cooldown
 
-    async def run_posts_only(self, limit: int = 50):
-        """Run posts processing only"""
-        logger.info("Mode: Posts Only (Posts + Media)")
+    async def run_threads_only(self, limit: int = 50):
+        """Run threads processing only (posts + media URLs, no comments)"""
+        logger.info("Mode: Threads Only (Posts + Media URLs)")
         logger.info("")
+
+        # Set all comments to deferred for threads-only mode
+        self.db.set_all_comments_deferred()
 
         subreddits = self.db.get_subreddits_for_posts(
             limit=limit,
@@ -294,84 +299,17 @@ class TieredScanner:
             logger.info(f"Cooldown for {self.config.comments_cooldown:.0f}s before next batch...")
             await asyncio.sleep(self.config.comments_cooldown)
 
-    async def run_both(self, limit: int = 50):
-        """Run interleaved posts and comments processing"""
-        logger.info("Mode: Both Tiers (Interleaved)")
-        logger.info("")
-
-        subreddits = self.db.get_subreddits_for_posts(
-            limit=limit,
-            min_subscribers=self.config.min_subscribers
-        )
-
-        if not subreddits:
-            logger.info("No subreddits need posts processing, switching to comments only")
-            await self.run_comments_only()
-            return
-
-        # Apply anti-detection shuffling
-        subreddits = self.anti_detection.shuffle_with_bias(subreddits, 'subscribers')
-
-        logger.info(f"Found {len(subreddits)} subreddits for posts")
-        logger.info("")
-
-        processed = 0
-        failed = 0
-
-        for i, sub in enumerate(subreddits, 1):
-            # Check for pause
-            pause_remaining = self.db.check_pause()
-            if pause_remaining:
-                logger.info(f"Scanner paused for {pause_remaining}s")
-                await asyncio.sleep(pause_remaining)
-
-            # Posts processing
-            try:
-                logger.info(f"[{i}/{len(subreddits)}] r/{sub['name']}")
-                success = await self.process_posts(sub['name'])
-                if success:
-                    processed += 1
-                else:
-                    failed += 1
-
-                # Check if should run comments batch
-                if self.should_run_comments():
-                    await self.process_comments_batch()
-
-                # Anti-detection break
-                await self.anti_detection.maybe_take_break()
-
-                # Pause between subreddits
-                if i < len(subreddits):
-                    pause = random.uniform(
-                        self.config.subreddit_pause_min,
-                        self.config.subreddit_pause_max
-                    )
-                    logger.info(f"Pausing {pause:.0f}s before next subreddit...")
-                    await asyncio.sleep(pause)
-
-            except Exception as e:
-                logger.error(f"Error processing r/{sub['name']}: {e}", exc_info=True)
-                failed += 1
-
-        logger.info("")
-        logger.info("=" * 60)
-        logger.info("BATCH COMPLETE")
-        logger.info("=" * 60)
-        logger.info(f"Posts processed: {processed}")
-        logger.info(f"Failed: {failed}")
-        logger.info("")
 
     async def run(self, limit: int = 50):
         """Main entry point - dispatches based on mode"""
         mode = self.config.scanner_mode
 
-        if mode == 'posts':
-            await self.run_posts_only(limit)
+        if mode == 'threads':
+            await self.run_threads_only(limit)
         elif mode == 'comments':
             await self.run_comments_only()
-        else:  # 'both'
-            await self.run_both(limit)
+        else:
+            raise ValueError(f"Invalid scanner_mode: {mode}. Must be 'threads' or 'comments'")
 
         # Final stats
         stats = self.db.get_stats()
@@ -379,10 +317,19 @@ class TieredScanner:
         for key, value in stats.items():
             logger.info(f"  {key}: {value:,}")
 
-    async def add_subreddits_from_sqlite(self, sqlite_path: str, min_subscribers: int = 5000):
-        import sqlite3
+    async def sync_from_scanner(self, sqlite_path: str, min_subscribers: int = 5000):
+        """Import/update subreddits from scanner SQLite database"""
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("SCANNER SQLITE SYNC")
+        logger.info("=" * 60)
+        logger.info(f"Scanner DB: {sqlite_path}")
+        logger.info(f"Min subscribers: {min_subscribers:,}")
+        logger.info("")
 
-        logger.info(f"Importing from {sqlite_path}")
+        if not Path(sqlite_path).exists():
+            logger.error(f"Scanner database not found: {sqlite_path}")
+            return
 
         conn = sqlite3.connect(sqlite_path)
         cursor = conn.cursor()
@@ -391,7 +338,9 @@ class TieredScanner:
             """
             SELECT name, subscribers
             FROM subreddits
-            WHERE status = 'active' AND subscribers >= ?
+            WHERE is_accessible = 1
+                AND status = 'active'
+                AND subscribers >= ?
             ORDER BY subscribers DESC
             """,
             (min_subscribers,)
@@ -400,26 +349,76 @@ class TieredScanner:
         rows = cursor.fetchall()
         conn.close()
 
-        logger.info(f"Found {len(rows)} subreddits with {min_subscribers}+ subscribers")
+        logger.info(f"Found {len(rows):,} accessible subreddits with {min_subscribers}+ subscribers")
+        logger.info("")
 
         added = 0
+        updated = 0
+
         for name, subscribers in rows:
+            # Calculate priority (1=highest, 5=lowest)
             if subscribers >= 1_000_000:
                 priority = 1
-            elif subscribers >= 100_000:
+            elif subscribers >= 500_000:
                 priority = 2
-            else:
+            elif subscribers >= 100_000:
                 priority = 3
+            elif subscribers >= 10_000:
+                priority = 4
+            else:
+                priority = 5
 
-            if self.db.add_subreddit(name, priority):
+            was_new, was_updated = self.db.upsert_subreddit(name, priority, subscribers)
+
+            if was_new:
                 added += 1
+            elif was_updated:
+                updated += 1
 
-        logger.info(f"Added {added} new subreddits")
+            if (added + updated) % 100 == 0:
+                logger.info(f"Progress: {added:,} added, {updated:,} updated")
+
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("SYNC COMPLETE")
+        logger.info("=" * 60)
+        logger.info(f"Added: {added:,} new subreddits")
+        logger.info(f"Updated: {updated:,} existing subreddits")
+        logger.info(f"Total synced: {added + updated:,}")
+        logger.info("")
 
 
 async def main():
+    parser = argparse.ArgumentParser(description='Reddit Archiver Scanner')
+    subparsers = parser.add_subparsers(dest='command', help='Command to run')
+
+    # Run command (main scanner)
+    run_parser = subparsers.add_parser('run', help='Run the scanner')
+    run_parser.add_argument('--limit', type=int, default=50, help='Batch size (default: 50)')
+    run_parser.add_argument('--mode', choices=['threads', 'comments'], help='Override SCANNER_MODE')
+
+    # Sync command (import from scanner SQLite)
+    sync_parser = subparsers.add_parser('sync', help='Sync subreddits from scanner SQLite database')
+    sync_parser.add_argument('--scanner-db', required=True, help='Path to scanner SQLite database')
+    sync_parser.add_argument('--min-subscribers', type=int, default=5000, help='Min subscribers (default: 5000)')
+
+    # Import CSV command
+    import_parser = subparsers.add_parser('import-csv', help='Import subreddits from CSV')
+    import_parser.add_argument('csv_file', help='Path to CSV file')
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
     try:
         config = ArchiverConfig.from_env()
+
+        # Override mode if specified
+        if hasattr(args, 'mode') and args.mode:
+            config.scanner_mode = args.mode
+
         config.validate()
     except Exception as e:
         print(f"Config error: {e}")
@@ -432,6 +431,7 @@ async def main():
     try:
         await scanner.initialize()
 
+        # Run migrations
         migrations_dir = Path(__file__).parent.parent / 'migrations'
         schema_file = migrations_dir / '001_initial_schema.sql'
 
@@ -441,23 +441,21 @@ async def main():
             logger.info("✓ Migrations complete")
             logger.info("")
 
-        import os
-        sqlite_path = os.getenv('SUBDIR_SQLITE_PATH')
-        if sqlite_path and Path(sqlite_path).exists():
-            await scanner.add_subreddits_from_sqlite(
-                sqlite_path,
-                min_subscribers=config.min_subscribers
-            )
+        # Execute command
+        if args.command == 'sync':
+            await scanner.sync_from_scanner(args.scanner_db, args.min_subscribers)
+
+        elif args.command == 'import-csv':
+            await import_csv_subreddits(scanner, args.csv_file)
+
+        elif args.command == 'run':
+            stats = scanner.db.get_stats()
+            logger.info("Initial Stats:")
+            for key, value in stats.items():
+                logger.info(f"  {key}: {value:,}")
             logger.info("")
 
-        stats = scanner.db.get_stats()
-        logger.info("Initial Stats:")
-        for key, value in stats.items():
-            logger.info(f"  {key}: {value:,}")
-        logger.info("")
-
-        batch_size = int(os.getenv('BATCH_SIZE', '10'))
-        await scanner.run(limit=batch_size)
+            await scanner.run(limit=args.limit)
 
     except KeyboardInterrupt:
         logger.info("")
@@ -467,6 +465,49 @@ async def main():
         sys.exit(1)
     finally:
         await scanner.shutdown()
+
+
+async def import_csv_subreddits(scanner: TieredScanner, csv_path: str):
+    """Import subreddits from CSV file"""
+    import csv
+
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("IMPORT SUBREDDITS FROM CSV")
+    logger.info("=" * 60)
+    logger.info(f"CSV file: {csv_path}")
+    logger.info("")
+
+    if not Path(csv_path).exists():
+        logger.error(f"CSV file not found: {csv_path}")
+        return
+
+    added = 0
+    skipped = 0
+
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            name = row['subreddit']
+            priority = int(row['priority'])
+
+            if scanner.db.add_subreddit(name, priority):
+                added += 1
+            else:
+                skipped += 1
+
+            if (added + skipped) % 50 == 0:
+                logger.info(f"Progress: {added:,} added, {skipped:,} skipped")
+
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("IMPORT COMPLETE")
+    logger.info("=" * 60)
+    logger.info(f"Added: {added:,} new subreddits")
+    logger.info(f"Skipped: {skipped:,} (already exist)")
+    logger.info(f"Total: {added + skipped:,}")
+    logger.info("")
 
 
 if __name__ == '__main__':
