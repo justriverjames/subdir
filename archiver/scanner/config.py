@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ArchiverConfig:
-    """Configuration for Reddit archiver scanner"""
+    """Configuration for Reddit archiver"""
 
     # Reddit API credentials
     reddit_client_id: str
@@ -54,12 +54,24 @@ class ArchiverConfig:
     max_consecutive_403: int = 5
     max_total_429: int = 2
 
-    # Two-tier processing (toggle between threads or comments, not both)
-    scanner_mode: str = 'threads'  # threads, comments
-    posts_weight: float = 0.8
+    # Worker enable flags
+    metadata_enabled: bool = True
+    threads_enabled: bool = True
+    comments_enabled: bool = False
+
+    # Budget weights (configurable, redistributed when workers are disabled)
+    metadata_weight: float = 0.2
+    threads_weight: float = 0.6
     comments_weight: float = 0.2
+
+    # Comments batch config
     comments_batch_size: int = 5
     comments_cooldown: float = 300.0  # 5 min between comment batches
+
+    # Metadata worker config
+    csv_path: str = ''
+    scanner_db_path: str = ''
+    stale_threshold_days: int = 30
 
     # Anti-detection
     break_after_subs_min: int = 10
@@ -75,11 +87,14 @@ class ArchiverConfig:
     # Logging
     log_level: str = 'INFO'
 
+    # Legacy (kept for backward compat, ignored by orchestrator)
+    scanner_mode: str = 'threads'
+    posts_weight: float = 0.8
+
     @classmethod
     def from_env(cls) -> 'ArchiverConfig':
         """Load configuration from environment variables"""
 
-        # Required credentials
         required = [
             'REDDIT_CLIENT_ID',
             'REDDIT_CLIENT_SECRET',
@@ -91,9 +106,8 @@ class ArchiverConfig:
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
 
-        # User agent
         username = os.getenv('REDDIT_USERNAME')
-        user_agent = os.getenv('USER_AGENT', f'linux:reddit-archiver:v1.0 (by /u/{username})')
+        user_agent = os.getenv('USER_AGENT', f'linux:subdir-archiver:v1.0 (by /u/{username})')
 
         config = cls(
             # Reddit API
@@ -126,12 +140,24 @@ class ArchiverConfig:
             subreddit_pause_min=float(os.getenv('SUBREDDIT_PAUSE_MIN', '30.0')),
             subreddit_pause_max=float(os.getenv('SUBREDDIT_PAUSE_MAX', '60.0')),
 
-            # Two-tier processing
-            scanner_mode=os.getenv('SCANNER_MODE', 'threads'),
-            posts_weight=float(os.getenv('POSTS_WEIGHT', '0.8')),
+            # Worker toggles
+            metadata_enabled=os.getenv('METADATA_ENABLED', 'true').lower() == 'true',
+            threads_enabled=os.getenv('THREADS_ENABLED', 'true').lower() == 'true',
+            comments_enabled=os.getenv('COMMENTS_ENABLED', 'false').lower() == 'true',
+
+            # Budget weights
+            metadata_weight=float(os.getenv('METADATA_WEIGHT', '0.2')),
+            threads_weight=float(os.getenv('THREADS_WEIGHT', '0.6')),
             comments_weight=float(os.getenv('COMMENTS_WEIGHT', '0.2')),
+
+            # Comments
             comments_batch_size=int(os.getenv('COMMENTS_BATCH_SIZE', '5')),
             comments_cooldown=float(os.getenv('COMMENTS_COOLDOWN', '300.0')),
+
+            # Metadata worker
+            csv_path=os.getenv('CSV_PATH', ''),
+            scanner_db_path=os.getenv('SCANNER_DB_PATH', ''),
+            stale_threshold_days=int(os.getenv('STALE_THRESHOLD_DAYS', '30')),
 
             # Anti-detection
             break_after_subs_min=int(os.getenv('BREAK_AFTER_SUBS_MIN', '10')),
@@ -145,9 +171,17 @@ class ArchiverConfig:
             log_level=os.getenv('LOG_LEVEL', 'INFO')
         )
 
-        logger.info("Configuration loaded from environment")
-        logger.info(f"Scanner mode: {config.scanner_mode}")
-        logger.info(f"Rate budget: posts={config.posts_weight:.0%}, comments={config.comments_weight:.0%}")
+        active = []
+        if config.metadata_enabled:
+            active.append('metadata')
+        if config.threads_enabled:
+            active.append('threads')
+        if config.comments_enabled:
+            active.append('comments')
+
+        logger.info("Configuration loaded")
+        logger.info(f"Workers: {', '.join(active)}")
+        logger.info(f"Weights: metadata={config.metadata_weight:.0%}, threads={config.threads_weight:.0%}, comments={config.comments_weight:.0%}")
         logger.info(f"Rate limits: {config.requests_per_minute}/min, {config.requests_per_10_seconds}/10s")
         logger.info(f"Min subscribers: {config.min_subscribers}")
 
@@ -157,38 +191,32 @@ class ArchiverConfig:
         """Validate configuration values"""
         errors = []
 
-        # Check rate limits are sensible
         if self.requests_per_minute > 90:
-            errors.append("requests_per_minute too high (max 90 to stay safe)")
+            errors.append("requests_per_minute too high (max 90)")
 
         if self.requests_per_10_seconds > 15:
             errors.append("requests_per_10_seconds too high (max 15)")
 
-        # Check delays
         if self.min_request_delay < 0.5:
             errors.append("min_request_delay too low (min 0.5s)")
 
         if self.max_request_delay < self.min_request_delay:
             errors.append("max_request_delay must be >= min_request_delay")
 
-        # Check processing limits
         if self.max_posts_per_subreddit < 100:
             errors.append("max_posts_per_subreddit too low (min 100)")
 
         if self.max_posts_per_subreddit > 2000:
-            errors.append("max_posts_per_subreddit too high (max 2000 for top+hot)")
+            errors.append("max_posts_per_subreddit too high (max 2000)")
 
-        # Two-tier settings
-        if self.scanner_mode not in ('threads', 'comments'):
-            errors.append("scanner_mode must be 'threads' or 'comments'")
-
-        if not (0.0 <= self.posts_weight <= 1.0):
-            errors.append("posts_weight must be between 0.0 and 1.0")
-
-        if not (0.0 <= self.comments_weight <= 1.0):
-            errors.append("comments_weight must be between 0.0 and 1.0")
+        # Weight validation
+        for name, w in [('metadata', self.metadata_weight),
+                        ('threads', self.threads_weight),
+                        ('comments', self.comments_weight)]:
+            if not (0.0 <= w <= 1.0):
+                errors.append(f"{name}_weight must be between 0.0 and 1.0")
 
         if errors:
-            raise ValueError(f"Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
+            raise ValueError("Config validation failed:\n" + "\n".join(f"  - {e}" for e in errors))
 
-        logger.info("Configuration validated successfully")
+        logger.info("Configuration validated")

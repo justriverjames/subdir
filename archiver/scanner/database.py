@@ -516,12 +516,13 @@ class Database:
                     cur.execute(
                         """
                         WITH subs_needing_comments AS (
-                            SELECT DISTINCT p.subreddit
+                            SELECT p.subreddit
                             FROM posts p
                             JOIN subreddits s ON p.subreddit = s.name
                             WHERE p.comment_fetch_status = 'pending'
                                 AND s.posts_status = 'completed'
-                            ORDER BY s.comments_status = 'processing' DESC,
+                            GROUP BY p.subreddit, s.comments_status, s.subscribers
+                            ORDER BY (s.comments_status = 'processing') DESC,
                                      s.subscribers DESC NULLS LAST
                             LIMIT %s
                         ),
@@ -555,29 +556,51 @@ class Database:
                     )
                 return [dict(row) for row in cur.fetchall()]
 
-    def mark_posts_complete(self, subreddit: str):
-        """Mark posts processing (posts + media) as completed for subreddit"""
+    def mark_posts_complete(self, subreddit: str, set_comments_deferred: bool = False):
+        """
+        Mark posts processing (posts + media) as completed for subreddit.
+        In threads-only mode, set_comments_deferred=True to keep comments as 'deferred'.
+        """
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 now = int(time.time())
-                cur.execute(
-                    """
-                    UPDATE subreddits
-                    SET posts_status = 'completed',
-                        posts_completed_at = %s,
-                        comments_status = CASE
-                            WHEN archive_comments THEN 'pending'
-                            ELSE 'skipped'
-                        END,
-                        posts_pending_comments = (
-                            SELECT COUNT(*)
-                            FROM posts
-                            WHERE subreddit = %s AND comment_fetch_status = 'pending'
-                        )
-                    WHERE name = %s
-                    """,
-                    (now, subreddit, subreddit)
-                )
+
+                if set_comments_deferred:
+                    # Threads-only mode: keep comments_status as 'deferred'
+                    cur.execute(
+                        """
+                        UPDATE subreddits
+                        SET posts_status = 'completed',
+                            posts_completed_at = %s,
+                            posts_pending_comments = (
+                                SELECT COUNT(*)
+                                FROM posts
+                                WHERE subreddit = %s AND comment_fetch_status = 'pending'
+                            )
+                        WHERE name = %s
+                        """,
+                        (now, subreddit, subreddit)
+                    )
+                else:
+                    # Normal mode: set comments based on archive_comments setting
+                    cur.execute(
+                        """
+                        UPDATE subreddits
+                        SET posts_status = 'completed',
+                            posts_completed_at = %s,
+                            comments_status = CASE
+                                WHEN archive_comments THEN 'pending'
+                                ELSE 'skipped'
+                            END,
+                            posts_pending_comments = (
+                                SELECT COUNT(*)
+                                FROM posts
+                                WHERE subreddit = %s AND comment_fetch_status = 'pending'
+                            )
+                        WHERE name = %s
+                        """,
+                        (now, subreddit, subreddit)
+                    )
 
     def mark_comments_complete(self, subreddit: str):
         """Mark comments processing as completed for subreddit"""
@@ -708,6 +731,61 @@ class Database:
     def clear_pause(self):
         """Clear pause"""
         self.update_scanner_state(pause_until=None)
+
+    # Metadata worker operations
+
+    def get_subreddits_for_metadata_update(self, limit: int = 200, stale_days: int = 30) -> List[Dict]:
+        """Get subreddits needing metadata refresh (never updated or older than stale_days)"""
+        cutoff = int(time.time()) - (stale_days * 86400)
+        with self.get_connection() as conn:
+            with conn.cursor(cursor_factory=extras.RealDictCursor) as cur:
+                cur.execute(
+                    """
+                    SELECT name, subscribers, last_metadata_update
+                    FROM subreddits
+                    WHERE status IN ('active', 'pending')
+                        AND (last_metadata_update IS NULL OR last_metadata_update < %s)
+                        AND retry_count < 3
+                    ORDER BY
+                        CASE WHEN last_metadata_update IS NULL THEN 0 ELSE 1 END ASC,
+                        subscribers DESC NULLS LAST
+                    LIMIT %s
+                    """,
+                    (cutoff, limit)
+                )
+                return [dict(row) for row in cur.fetchall()]
+
+    def get_worker_enabled_states(self) -> Dict:
+        """Read per-worker enabled flags from scanner_state"""
+        state = self.get_scanner_state()
+        return {
+            'metadata': state.get('metadata_enabled', True),
+            'threads': state.get('threads_enabled', True),
+            'comments': state.get('comments_enabled', False),
+        }
+
+    def set_worker_enabled(self, worker_type: str, enabled: bool):
+        """Toggle a worker on/off"""
+        col = f'{worker_type}_enabled'
+        self.update_scanner_state(**{col: enabled})
+        logger.info(f"Worker {worker_type} {'enabled' if enabled else 'disabled'}")
+
+    def get_worker_weights(self) -> Dict:
+        """Read budget weights from scanner_state"""
+        state = self.get_scanner_state()
+        return {
+            'metadata': state.get('metadata_weight', 0.2),
+            'threads': state.get('threads_weight', 0.6),
+            'comments': state.get('comments_weight', 0.2),
+        }
+
+    def set_worker_weights(self, metadata: float, threads: float, comments: float):
+        """Update budget weights"""
+        self.update_scanner_state(
+            metadata_weight=metadata,
+            threads_weight=threads,
+            comments_weight=comments
+        )
 
     # Migration operations
 

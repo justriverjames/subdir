@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS processing_state (
 -- Scanner state: global settings and rate budget (singleton)
 CREATE TABLE IF NOT EXISTS scanner_state (
     id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    active_mode VARCHAR(20) DEFAULT 'both',
+    active_mode VARCHAR(20) DEFAULT 'threads',
     posts_rate_budget FLOAT DEFAULT 0.8,
     comments_rate_budget FLOAT DEFAULT 0.2,
     last_posts_activity BIGINT,

@@ -494,29 +494,33 @@
                 <button class="btn-secondary" onclick="refreshDashboard()">Refresh</button>
             </div>
 
-            <!-- Scanner Mode & Controls -->
+            <!-- Worker Toggles -->
             <div class="scanner-controls" style="margin: 2rem 0; padding: 1.5rem; background: #1a1a1a; border-radius: 8px;">
-                <h2 style="margin-bottom: 1rem; font-size: 1.25rem;">Scanner Controls</h2>
-                <div style="display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;">
-                    <div style="flex: 1; min-width: 200px;">
-                        <label style="display: block; margin-bottom: 0.5rem; color: #999;">Mode</label>
-                        <select id="scanner-mode" style="width: 100%; padding: 0.5rem; background: #0f0f0f; border: 1px solid #333; border-radius: 4px; color: #fff;">
-                            <option value="both">Both (Posts + Comments)</option>
-                            <option value="posts">Posts Only</option>
-                            <option value="comments">Comments Only</option>
-                        </select>
-                    </div>
-                    <div style="display: flex; gap: 0.5rem; align-items: flex-end;">
-                        <button class="btn-secondary" onclick="updateMode()" style="margin: 0;">Apply Mode</button>
-                    </div>
-                    <div style="flex: 1; min-width: 200px;">
-                        <label style="display: block; margin-bottom: 0.5rem; color: #999;">Pause Scanner</label>
-                        <div style="display: flex; gap: 0.5rem;">
-                            <button class="btn-secondary" onclick="pauseScanner(5)" style="margin: 0;">5 min</button>
-                            <button class="btn-secondary" onclick="pauseScanner(15)" style="margin: 0;">15 min</button>
-                            <button class="btn-secondary" onclick="pauseScanner(60)" style="margin: 0;">1 hour</button>
-                            <button class="btn-primary" onclick="resumeScanner()" style="margin: 0;">Resume</button>
-                        </div>
+                <h2 style="margin-bottom: 1rem; font-size: 1.25rem;">Workers</h2>
+                <div style="display: flex; gap: 1.5rem; flex-wrap: wrap; align-items: center;">
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="toggle-metadata" onchange="toggleWorker('metadata', this.checked)"
+                               style="width: 18px; height: 18px; accent-color: #3b82f6;">
+                        <span style="color: #3b82f6; font-weight: 600;">Metadata</span>
+                        <span style="color: #666; font-size: 0.8rem;" id="metadata-status"></span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="toggle-threads" onchange="toggleWorker('threads', this.checked)"
+                               style="width: 18px; height: 18px; accent-color: #ff6b35;">
+                        <span style="color: #ff6b35; font-weight: 600;">Threads</span>
+                        <span style="color: #666; font-size: 0.8rem;" id="threads-status"></span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                        <input type="checkbox" id="toggle-comments" onchange="toggleWorker('comments', this.checked)"
+                               style="width: 18px; height: 18px; accent-color: #4CAF50;">
+                        <span style="color: #4CAF50; font-weight: 600;">Comments</span>
+                        <span style="color: #666; font-size: 0.8rem;" id="comments-status"></span>
+                    </label>
+                    <div style="margin-left: auto; display: flex; gap: 0.5rem;">
+                        <button class="btn-secondary" onclick="pauseScanner(5)" style="margin: 0;">Pause 5m</button>
+                        <button class="btn-secondary" onclick="pauseScanner(15)" style="margin: 0;">15m</button>
+                        <button class="btn-secondary" onclick="pauseScanner(60)" style="margin: 0;">1h</button>
+                        <button class="btn-primary" onclick="resumeScanner()" style="margin: 0;">Resume</button>
                     </div>
                 </div>
             </div>
@@ -524,10 +528,28 @@
             <!-- Processing Queues -->
             <div class="queues-section" style="margin: 2rem 0;">
                 <h2 style="margin-bottom: 1rem; font-size: 1.25rem;">Processing Queues</h2>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
-                    <!-- Posts Queue -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem;">
+                    <!-- Metadata Queue -->
+                    <div class="queue-card" style="background: #1a1a1a; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #3b82f6;">
+                        <h3 style="margin-bottom: 1rem; color: #3b82f6; font-size: 1.1rem;">Metadata (Scanner)</h3>
+                        <div class="queue-stats" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #999;">CSV Remaining:</span>
+                                <span style="color: #fff; font-weight: 600;" id="metadata-csv">0</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #999;">Discovered:</span>
+                                <span style="color: #fff; font-weight: 600;" id="metadata-discovered">0</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between;">
+                                <span style="color: #999;">Budget:</span>
+                                <span style="color: #fff; font-weight: 600;" id="metadata-budget">20%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Threads Queue -->
                     <div class="queue-card" style="background: #1a1a1a; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #ff6b35;">
-                        <h3 style="margin-bottom: 1rem; color: #ff6b35; font-size: 1.1rem;">Posts & Media</h3>
+                        <h3 style="margin-bottom: 1rem; color: #ff6b35; font-size: 1.1rem;">Threads (Posts + Media)</h3>
                         <div class="queue-stats" style="display: flex; flex-direction: column; gap: 0.75rem;">
                             <div style="display: flex; justify-content: space-between;">
                                 <span style="color: #999;">Pending:</span>
@@ -539,13 +561,13 @@
                             </div>
                             <div style="display: flex; justify-content: space-between;">
                                 <span style="color: #999;">Budget:</span>
-                                <span style="color: #fff; font-weight: 600;" id="posts-budget">80%</span>
+                                <span style="color: #fff; font-weight: 600;" id="threads-budget">60%</span>
                             </div>
                         </div>
                     </div>
                     <!-- Comments Queue -->
                     <div class="queue-card" style="background: #1a1a1a; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #4CAF50;">
-                        <h3 style="margin-bottom: 1rem; color: #4CAF50; font-size: 1.1rem;">Comments (Background)</h3>
+                        <h3 style="margin-bottom: 1rem; color: #4CAF50; font-size: 1.1rem;">Comments</h3>
                         <div class="queue-stats" style="display: flex; flex-direction: column; gap: 0.75rem;">
                             <div style="display: flex; justify-content: space-between;">
                                 <span style="color: #999;">Posts Pending:</span>
@@ -859,43 +881,52 @@
 
         async function refreshQueues() {
             try {
-                const res = await fetch('/api/queues');
-                const data = await res.json();
+                // Fetch both queues and workers in parallel
+                const [qRes, wRes] = await Promise.all([
+                    fetch('/api/queues'),
+                    fetch('/api/workers')
+                ]);
+                const qData = await qRes.json();
+                const wData = await wRes.json();
 
-                // Update posts queue
-                document.getElementById('posts-pending').textContent = formatNumber(data.posts.pending);
-                document.getElementById('posts-current').textContent = data.posts.current || '--';
-                document.getElementById('posts-budget').textContent = (data.scanner.posts_budget * 100).toFixed(0) + '%';
+                // Update threads queue
+                document.getElementById('posts-pending').textContent = formatNumber(qData.posts.pending);
+                document.getElementById('posts-current').textContent = qData.posts.current || '--';
 
                 // Update comments queue
-                document.getElementById('comments-pending').textContent = formatNumber(data.comments.pending_posts);
-                document.getElementById('comments-subs').textContent = formatNumber(data.comments.total_subs);
-                document.getElementById('comments-budget').textContent = (data.scanner.comments_budget * 100).toFixed(0) + '%';
+                document.getElementById('comments-pending').textContent = formatNumber(qData.comments.pending_posts);
+                document.getElementById('comments-subs').textContent = formatNumber(qData.comments.total_subs);
 
-                // Update mode selector
-                document.getElementById('scanner-mode').value = data.scanner.mode || 'both';
+                // Update worker toggles and budgets
+                if (wData.workers) {
+                    const w = wData.workers;
+
+                    document.getElementById('toggle-metadata').checked = w.metadata.enabled;
+                    document.getElementById('toggle-threads').checked = w.threads.enabled;
+                    document.getElementById('toggle-comments').checked = w.comments.enabled;
+
+                    document.getElementById('metadata-budget').textContent = (w.metadata.weight * 100).toFixed(0) + '%';
+                    document.getElementById('threads-budget').textContent = (w.threads.weight * 100).toFixed(0) + '%';
+                    document.getElementById('comments-budget').textContent = (w.comments.weight * 100).toFixed(0) + '%';
+
+                    document.getElementById('metadata-csv').textContent = formatNumber(w.metadata.csv_remaining);
+                    document.getElementById('metadata-discovered').textContent = formatNumber(w.metadata.discovered);
+                }
             } catch (e) {
                 console.error('Error refreshing queues:', e);
             }
         }
 
-        async function updateMode() {
-            const mode = document.getElementById('scanner-mode').value;
+        async function toggleWorker(type, enabled) {
             try {
-                const res = await fetch('/api/scanner/mode', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mode })
-                });
+                const action = enabled ? 'enable' : 'disable';
+                const res = await fetch(`/api/workers/${type}/${action}`, { method: 'POST' });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    showNotification(`Scanner mode updated to: ${mode}`, 'success');
-                    await refreshQueues();
-                } else {
-                    showNotification('Failed to update mode', 'error');
+                    showNotification(`${type} worker ${action}d`, 'success');
                 }
             } catch (e) {
-                showNotification('Error updating mode: ' + e.message, 'error');
+                showNotification('Error toggling worker: ' + e.message, 'error');
             }
         }
 
@@ -1104,9 +1135,11 @@
                 const configGroups = {
                     'Reddit API': ['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET', 'REDDIT_USERNAME', 'REDDIT_PASSWORD'],
                     'PostgreSQL': ['POSTGRES_DB', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_PORT'],
+                    'Workers': ['METADATA_ENABLED', 'THREADS_ENABLED', 'COMMENTS_ENABLED'],
+                    'Budget Weights': ['METADATA_WEIGHT', 'THREADS_WEIGHT', 'COMMENTS_WEIGHT'],
                     'Archival Settings': ['MIN_SUBSCRIBERS', 'MAX_POSTS_PER_SUBREDDIT', 'MAX_COMMENTS_PER_POST', 'MAX_COMMENT_DEPTH', 'FILTER_BOTS'],
                     'Rate Limiting': ['REQUESTS_PER_MINUTE', 'REQUESTS_PER_10_SECONDS', 'REQUESTS_PER_SECOND'],
-                    'Processing': ['BATCH_SIZE']
+                    'Metadata Worker': ['CSV_PATH', 'SCANNER_DB_PATH', 'STALE_THRESHOLD_DAYS']
                 };
 
                 for (const [groupName, keys] of Object.entries(configGroups)) {

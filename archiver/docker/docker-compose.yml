@@ -33,12 +33,12 @@ services:
       -c maintenance_work_mem=128MB
       -c max_connections=50
 
-  scanner:
+  app:
     build:
       context: ..
-      dockerfile: docker/Dockerfile.scanner
-    image: subdir-archiver-scanner:latest
-    container_name: subdir-archiver-scanner
+      dockerfile: docker/Dockerfile
+    image: subdir-archiver:latest
+    container_name: subdir-archiver-app
     networks:
       - archiver-network
     depends_on:
@@ -67,12 +67,21 @@ services:
       REQUESTS_PER_MINUTE: ${REQUESTS_PER_MINUTE:-60}
       REQUESTS_PER_10_SECONDS: ${REQUESTS_PER_10_SECONDS:-10}
       REQUESTS_PER_SECOND: ${REQUESTS_PER_SECOND:-2}
-      # Two-tier processing
-      SCANNER_MODE: ${SCANNER_MODE:-threads}
-      POSTS_WEIGHT: ${POSTS_WEIGHT:-0.8}
+      # Workers
+      METADATA_ENABLED: ${METADATA_ENABLED:-true}
+      THREADS_ENABLED: ${THREADS_ENABLED:-true}
+      COMMENTS_ENABLED: ${COMMENTS_ENABLED:-false}
+      # Budget weights
+      METADATA_WEIGHT: ${METADATA_WEIGHT:-0.2}
+      THREADS_WEIGHT: ${THREADS_WEIGHT:-0.6}
       COMMENTS_WEIGHT: ${COMMENTS_WEIGHT:-0.2}
+      # Comments config
       COMMENTS_BATCH_SIZE: ${COMMENTS_BATCH_SIZE:-5}
       COMMENTS_COOLDOWN: ${COMMENTS_COOLDOWN:-300}
+      # Metadata worker
+      CSV_PATH: ${CSV_PATH:-/app/data/subreddits_to_scan.csv}
+      SCANNER_DB_PATH: ${SCANNER_DB_PATH:-/app/data/subreddit_scanner.db}
+      STALE_THRESHOLD_DAYS: ${STALE_THRESHOLD_DAYS:-30}
       # Anti-detection
       BREAK_AFTER_SUBS_MIN: ${BREAK_AFTER_SUBS_MIN:-10}
       BREAK_AFTER_SUBS_MAX: ${BREAK_AFTER_SUBS_MAX:-25}
@@ -80,47 +89,30 @@ services:
       BREAK_DURATION_MAX: ${BREAK_DURATION_MAX:-300}
       LONG_BREAK_PROBABILITY: ${LONG_BREAK_PROBABILITY:-0.05}
       SHUFFLE_ORDER: ${SHUFFLE_ORDER:-true}
-      # Batch processing (process 1 subreddit at a time by default for safety)
+      # Batch processing
       BATCH_SIZE: ${BATCH_SIZE:-1}
-      # Pause between subreddits (seconds)
+      # Pause between subreddits
       SUBREDDIT_PAUSE_MIN: ${SUBREDDIT_PAUSE_MIN:-30}
       SUBREDDIT_PAUSE_MAX: ${SUBREDDIT_PAUSE_MAX:-60}
-    volumes:
-      - subdir-archiver-scanner-logs:/app/logs
-      # Mount scanner database and priority CSV
-      - /Users/river/code/justriverjames/subdir/data:/app/data:ro
-      - ../priority_subreddits.csv:/app/priority_subreddits.csv:ro
-
-  webui:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.webui
-    image: subdir-archiver-webui:latest
-    container_name: subdir-archiver-webui
-    networks:
-      - archiver-network
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      # PostgreSQL connection
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-reddit_archiver}
-      POSTGRES_USER: ${POSTGRES_USER:-archiver}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     ports:
       - "8480:8480"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - subdir-archiver-scanner-logs:/app/logs:ro
+      # Source code mounts for hot-reload
+      - ../scanner:/app/scanner
+      - ../webui:/app/webui
+      - ../migrations:/app/migrations
+      - ./logs:/app/logs
       - ./.env:/app/.env
+      # Data files
+      - ${SCANNER_DB_HOST_PATH:-/Users/river/code/justriverjames/subdir/data/subreddit_scanner.db}:/app/data/subreddit_scanner.db
+      - ${CSV_HOST_PATH:-/Users/river/code/justriverjames/subdir/data/subreddits_to_scan.csv}:/app/data/subreddits_to_scan.csv
+      - ../priority_subreddits.csv:/app/priority_subreddits.csv:ro
+    command: uvicorn webui.main:app --host 0.0.0.0 --port 8480 --reload --reload-dir /app/scanner --reload-dir /app/webui
     restart: unless-stopped
 
 volumes:
   subdir-archiver-postgres-data:
     name: subdir-archiver-postgres-data
-    driver: local
-  subdir-archiver-scanner-logs:
-    name: subdir-archiver-scanner-logs
     driver: local

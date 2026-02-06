@@ -78,6 +78,21 @@ async def get_stats():
         """)
         stats = cursor.fetchone()
 
+        # Tier-level breakdowns
+        cursor.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE posts_status = 'pending') as posts_pending,
+                COUNT(*) FILTER (WHERE posts_status = 'processing') as posts_processing,
+                COUNT(*) FILTER (WHERE posts_status = 'completed') as posts_completed,
+                COUNT(*) FILTER (WHERE posts_status = 'error') as posts_error,
+                COUNT(*) FILTER (WHERE comments_status = 'pending') as comments_pending,
+                COUNT(*) FILTER (WHERE comments_status = 'processing') as comments_processing,
+                COUNT(*) FILTER (WHERE comments_status = 'completed') as comments_completed,
+                COUNT(*) FILTER (WHERE comments_status = 'deferred') as comments_deferred
+            FROM subreddits
+        """)
+        tier_stats = cursor.fetchone()
+
         # Recent activity
         cursor.execute("""
             SELECT name, status, total_posts, total_comments, last_metadata_update
@@ -109,6 +124,7 @@ async def get_stats():
 
         return {
             "stats": stats,
+            "tier_stats": tier_stats,
             "recent_activity": recent,
             "currently_processing": processing,
             "timestamp": datetime.now().isoformat()
@@ -406,54 +422,110 @@ async def get_scanner_state():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/scanner/mode")
-async def set_scanner_mode(mode: str):
-    """Set scanner mode (posts/comments/both)"""
-    if mode not in ('posts', 'comments', 'both'):
-        raise HTTPException(status_code=400, detail="Mode must be posts, comments, or both")
-
+@app.get("/api/workers")
+async def get_workers():
+    """Get status of all three workers"""
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-
-        cursor.execute("""
-            UPDATE scanner_state
-            SET active_mode = %s,
-                updated_at = extract(epoch from now())::bigint
-            WHERE id = 1
-        """, (mode,))
-
-        conn.commit()
+        cursor.execute("SELECT * FROM scanner_state WHERE id = 1")
+        state = cursor.fetchone()
         cursor.close()
         conn.close()
 
-        return {"status": "success", "mode": mode}
+        if not state:
+            return {"workers": {}}
+
+        return {
+            "workers": {
+                "metadata": {
+                    "enabled": state.get('metadata_enabled', True),
+                    "weight": state.get('metadata_weight', 0.2),
+                    "processed": state.get('metadata_subs_processed', 0),
+                    "discovered": state.get('metadata_subs_discovered', 0),
+                    "csv_remaining": state.get('csv_remaining', 0),
+                    "last_activity": state.get('last_metadata_activity'),
+                },
+                "threads": {
+                    "enabled": state.get('threads_enabled', True),
+                    "weight": state.get('threads_weight', 0.6),
+                    "processed": state.get('posts_subs_processed', 0),
+                    "last_activity": state.get('last_posts_activity'),
+                },
+                "comments": {
+                    "enabled": state.get('comments_enabled', False),
+                    "weight": state.get('comments_weight', 0.2),
+                    "processed": state.get('comments_posts_processed', 0),
+                    "last_activity": state.get('last_comments_activity'),
+                },
+            }
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/scanner/budget")
-async def set_rate_budget(posts: float, comments: float):
-    """Set rate budget allocation"""
-    if not (0.0 <= posts <= 1.0) or not (0.0 <= comments <= 1.0):
-        raise HTTPException(status_code=400, detail="Budgets must be between 0.0 and 1.0")
-
+@app.post("/api/workers/{worker_type}/enable")
+async def enable_worker(worker_type: str):
+    """Enable a worker"""
+    if worker_type not in ('metadata', 'threads', 'comments'):
+        raise HTTPException(status_code=400, detail="Worker must be metadata, threads, or comments")
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-
-        cursor.execute("""
+        cursor.execute(f"""
             UPDATE scanner_state
-            SET posts_rate_budget = %s,
-                comments_rate_budget = %s,
+            SET {worker_type}_enabled = TRUE,
                 updated_at = extract(epoch from now())::bigint
             WHERE id = 1
-        """, (posts, comments))
-
+        """)
         conn.commit()
         cursor.close()
         conn.close()
+        return {"status": "success", "worker": worker_type, "enabled": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-        return {"status": "success", "posts": posts, "comments": comments}
+@app.post("/api/workers/{worker_type}/disable")
+async def disable_worker(worker_type: str):
+    """Disable a worker"""
+    if worker_type not in ('metadata', 'threads', 'comments'):
+        raise HTTPException(status_code=400, detail="Worker must be metadata, threads, or comments")
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            UPDATE scanner_state
+            SET {worker_type}_enabled = FALSE,
+                updated_at = extract(epoch from now())::bigint
+            WHERE id = 1
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return {"status": "success", "worker": worker_type, "enabled": False}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/workers/weights")
+async def set_worker_weights(metadata: float, threads: float, comments: float):
+    """Set budget weight allocation"""
+    for w in [metadata, threads, comments]:
+        if not (0.0 <= w <= 1.0):
+            raise HTTPException(status_code=400, detail="Weights must be between 0.0 and 1.0")
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE scanner_state
+            SET metadata_weight = %s,
+                threads_weight = %s,
+                comments_weight = %s,
+                updated_at = extract(epoch from now())::bigint
+            WHERE id = 1
+        """, (metadata, threads, comments))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return {"status": "success", "metadata": metadata, "threads": threads, "comments": comments}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

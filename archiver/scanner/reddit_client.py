@@ -4,18 +4,24 @@ import time
 import logging
 from typing import Optional, Dict, List, Any
 
+from global_rate_limiter import GlobalRateLimiter, TaskType
+
 logger = logging.getLogger(__name__)
 
 
 class RedditAPIClient:
     """
     Reddit API client with OAuth2 authentication.
-    Handles token management, requests, and error handling.
+    Uses GlobalRateLimiter for shared budget across all workers.
+    Each request specifies a task_type so budget is allocated correctly.
     """
 
-    def __init__(self, config, rate_limiter):
+    def __init__(self, config, rate_limiter: GlobalRateLimiter):
         self.config = config
         self.rate_limiter = rate_limiter
+
+        # Default task type (overridden per-call via task_type param)
+        self._current_task_type = TaskType.THREADS
 
         self.access_token: Optional[str] = None
         self.token_expires_at: float = 0
@@ -81,12 +87,18 @@ class RedditAPIClient:
             logger.info("Token expired, re-authenticating")
             await self.authenticate()
 
-    async def request(self, method: str, url: str, **kwargs) -> aiohttp.ClientResponse:
+    def set_task_type(self, task_type: TaskType):
+        """Set the current task type for rate limit budget allocation"""
+        self._current_task_type = task_type
+
+    async def request(self, method: str, url: str, task_type: TaskType = None, **kwargs) -> aiohttp.ClientResponse:
         """
         Make authenticated request with rate limiting and retry logic.
+        task_type determines which worker's budget this request counts against.
         """
+        tt = task_type or self._current_task_type
         await self.ensure_authenticated()
-        await self.rate_limiter.wait_with_delay()
+        await self.rate_limiter.wait_with_delay(tt)
 
         headers = kwargs.pop('headers', {})
         headers['User-Agent'] = self.config.user_agent
