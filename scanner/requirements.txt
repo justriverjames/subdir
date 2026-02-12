@@ -1,0 +1,10 @@
+# Subreddit Scanner Dependencies
+
+# HTTP client for Reddit API
+httpx>=0.26.0
+
+# Environment variable management
+python-dotenv>=1.0.0
+
+# Claude API for categorization (optional - only needed for categorize scripts)
+anthropic>=0.34.0
